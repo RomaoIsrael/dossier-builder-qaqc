@@ -8,6 +8,7 @@ from typing import Optional
 from PySide6.QtCore import QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -38,12 +39,15 @@ from app.services.settings import SettingsService
 from app.ui.dialogs import (
     AutoDistributeDialog,
     DossierOutlinePreviewDialog,
+    DossierThumbnailPreviewDialog,
     MetadataDialog,
     NewSectionDialog,
     PdfPreviewDialog,
+    PreferencesDialog,
     SettingsDialog,
     ValidationResultsDialog,
 )
+from app.ui.theme import apply_theme
 from app.ui.widgets import DocumentListWidget, SectionTreeWidget
 
 logger = get_logger("ui.main_window")
@@ -125,9 +129,11 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         add_action("Metadatos", self.edit_metadata)
         add_action("Configuracion", self.edit_settings)
+        add_action("Preferencias", self.edit_preferences)
         toolbar.addSeparator()
         add_action("Distribuir documentos (auto)", self.auto_distribute_documents)
         add_action("Vista previa del dossier", self.preview_dossier_outline)
+        add_action("Vista previa con miniaturas", self.preview_dossier_thumbnails)
         toolbar.addSeparator()
         add_action("Validar dossier", self.validate_dossier)
         self.generate_action = add_action("Generar dossier", self.generate_dossier)
@@ -296,6 +302,17 @@ class MainWindow(QMainWindow):
             self.project.settings = dialog.apply_to(self.project.settings)
             self.project.touch()
 
+    def edit_preferences(self) -> None:
+        """Preferencias globales (tema, DPI/nombre/salida por defecto), no
+        atadas a un proyecto en particular."""
+        dialog = PreferencesDialog(self.settings_service.settings, self)
+        if dialog.exec():
+            dialog.apply_to(self.settings_service.settings)
+            self.settings_service.save()
+            app = QApplication.instance()
+            if app is not None:
+                apply_theme(app, self.settings_service.settings.theme)
+
     # ------------------------------------------------------------------
     # Secciones
     # ------------------------------------------------------------------
@@ -427,21 +444,34 @@ class MainWindow(QMainWindow):
             self.tree.select_section(touched_section_id)
         self.statusBar().showMessage(f"{added_count} documento(s) distribuido(s) automaticamente.", 5000)
 
+    def _compute_preview_rows(self):
+        """Devuelve la lista de PreviewRow del dossier actual, o None si no
+        se pudo calcular (y ya se mostro el mensaje de error correspondiente)."""
+        if not self.project.template_path:
+            QMessageBox.information(self, "Vista previa del dossier", "Cargue primero una plantilla.")
+            return None
+        try:
+            builder = DossierBuilder(self.project)
+            return builder.build_preview_outline()
+        except pdf_engine.PDFOpenError as exc:
+            QMessageBox.critical(self, "Vista previa del dossier", str(exc))
+            return None
+
     def preview_dossier_outline(self) -> None:
         if not self._require_project():
             return
-        if not self.project.template_path:
-            QMessageBox.information(self, "Vista previa del dossier", "Cargue primero una plantilla.")
+        rows = self._compute_preview_rows()
+        if rows is None:
             return
-
-        try:
-            builder = DossierBuilder(self.project)
-            rows = builder.build_preview_outline()
-        except pdf_engine.PDFOpenError as exc:
-            QMessageBox.critical(self, "Vista previa del dossier", str(exc))
-            return
-
         DossierOutlinePreviewDialog(rows, self).exec()
+
+    def preview_dossier_thumbnails(self) -> None:
+        if not self._require_project():
+            return
+        rows = self._compute_preview_rows()
+        if rows is None:
+            return
+        DossierThumbnailPreviewDialog(rows, self).exec()
 
     def _inspect_document(self, doc: DocumentItem) -> None:
         """Completa metadatos basicos y deteccion de firma al agregar un documento."""

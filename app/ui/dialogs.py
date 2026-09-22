@@ -11,10 +11,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -22,9 +24,11 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from app.core.dossier_builder import PreviewRow
@@ -32,6 +36,7 @@ from app.core.section_suggester import suggest_sections_for_files
 from app.core.validator import Severity, ValidationReport
 from app.models.project_model import ProjectMetadata, ProjectSettings
 from app.models.section_model import SectionNode
+from app.services.settings import AppSettings
 
 
 class MetadataDialog(QDialog):
@@ -111,6 +116,10 @@ class SettingsDialog(QDialog):
         self.output_dir_edit = QLineEdit(settings.output_dir)
         form.addRow("Carpeta de salida por defecto", self.output_dir_edit)
 
+        self.auto_index_checkbox = QCheckBox("Generar indice automatico (seccion/subseccion + pagina)")
+        self.auto_index_checkbox.setChecked(settings.generate_automatic_index)
+        form.addRow("", self.auto_index_checkbox)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -118,6 +127,12 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(QLabel("Variables disponibles: {codigo} {pozo} {wo} {tipo} {revision} {contrato} {bloque}"))
+        layout.addWidget(
+            QLabel(
+                "El indice automatico se inserta al comienzo del dossier final, ademas del indice "
+                "existente en la plantilla (que se respeta sin cambios)."
+            )
+        )
         layout.addWidget(buttons)
 
     def apply_to(self, settings: ProjectSettings) -> ProjectSettings:
@@ -126,6 +141,53 @@ class SettingsDialog(QDialog):
         settings.signature_mode = self.signature_mode_combo.currentData()
         settings.output_naming_pattern = self.naming_edit.text() or settings.output_naming_pattern
         settings.output_dir = self.output_dir_edit.text()
+        settings.generate_automatic_index = self.auto_index_checkbox.isChecked()
+        return settings
+
+
+class PreferencesDialog(QDialog):
+    """Preferencias globales de la aplicacion (tema, DPI por defecto, etc.),
+    validas para todos los proyectos, no solo el actual.
+    """
+
+    def __init__(self, settings: AppSettings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Preferencias")
+        self.setMinimumWidth(420)
+
+        form = QFormLayout()
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Claro", "light")
+        self.theme_combo.addItem("Oscuro", "dark")
+        index = self.theme_combo.findData(settings.theme)
+        self.theme_combo.setCurrentIndex(max(0, index))
+        form.addRow("Tema", self.theme_combo)
+
+        self.dpi_combo = QComboBox()
+        self.dpi_combo.addItems(["150", "200", "300", "400"])
+        self.dpi_combo.setCurrentText(str(settings.default_flatten_dpi))
+        form.addRow("DPI de aplanado por defecto", self.dpi_combo)
+
+        self.naming_edit = QLineEdit(settings.default_naming_pattern)
+        form.addRow("Patron de nombre por defecto", self.naming_edit)
+
+        self.output_dir_edit = QLineEdit(settings.default_output_dir)
+        form.addRow("Carpeta de salida por defecto", self.output_dir_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def apply_to(self, settings: AppSettings) -> AppSettings:
+        settings.theme = self.theme_combo.currentData()
+        settings.default_flatten_dpi = int(self.dpi_combo.currentText())
+        settings.default_naming_pattern = self.naming_edit.text() or settings.default_naming_pattern
+        settings.default_output_dir = self.output_dir_edit.text()
         return settings
 
 
@@ -405,3 +467,106 @@ class DossierOutlinePreviewDialog(QDialog):
                 display.append((str(row.start_page), "Documento", row.section_label, f"{row.label} ({page_count_label} pag.)"))
                 i += 1
         return display
+
+
+class DossierThumbnailPreviewDialog(QDialog):
+    """Vista previa con miniaturas reales: una imagen por cada pagina de la
+    plantilla y por la primera pagina de cada documento, en el orden final
+    del dossier. No renderiza el dossier completo pagina por pagina (seria
+    demasiado lento en dossiers de cientos de paginas); cada documento se
+    representa con su primera pagina, que basta para verificar visualmente
+    el orden y que el archivo correcto quedo en cada seccion.
+    """
+
+    _THUMB_WIDTH = 120
+    _THUMB_HEIGHT = 156
+    _COLUMNS = 5
+
+    def __init__(self, rows: list[PreviewRow], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Vista previa del dossier (miniaturas)")
+        self.resize(820, 680)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.addWidget(
+            QLabel(f"{len(rows)} elemento(s) - se muestra la primera pagina de cada documento")
+        )
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setSpacing(10)
+
+        open_docs: dict[str, Optional[fitz.Document]] = {}
+
+        def get_source_doc(path: str) -> Optional[fitz.Document]:
+            if path not in open_docs:
+                try:
+                    open_docs[path] = fitz.open(path)
+                except Exception:  # noqa: BLE001 - un archivo movido/danado no debe romper la vista previa
+                    open_docs[path] = None
+            return open_docs[path]
+
+        for index, row in enumerate(rows):
+            cell = QWidget()
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(2, 2, 2, 2)
+
+            image_label = QLabel()
+            image_label.setAlignment(Qt.AlignCenter)
+            image_label.setFixedSize(self._THUMB_WIDTH, self._THUMB_HEIGHT)
+            image_label.setStyleSheet("border: 1px solid #999999; background-color: white;")
+
+            qpixmap = self._render_thumbnail(row, get_source_doc)
+            if qpixmap is not None:
+                image_label.setPixmap(
+                    qpixmap.scaled(
+                        self._THUMB_WIDTH,
+                        self._THUMB_HEIGHT,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+                )
+            else:
+                image_label.setText("(sin vista\nprevia)")
+
+            caption_text = f"pag. {row.start_page}"
+            if row.kind == "doc" and row.section_label:
+                caption_text += f" - {row.section_label}"
+            caption_text += f"\n{row.label}"
+            caption = QLabel(caption_text)
+            caption.setAlignment(Qt.AlignCenter)
+            caption.setWordWrap(True)
+            caption.setFixedWidth(self._THUMB_WIDTH)
+
+            cell_layout.addWidget(image_label)
+            cell_layout.addWidget(caption)
+            grid.addWidget(cell, index // self._COLUMNS, index % self._COLUMNS)
+
+        for doc in open_docs.values():
+            if doc is not None:
+                doc.close()
+
+        scroll.setWidget(container)
+        outer_layout.addWidget(scroll, stretch=1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        outer_layout.addWidget(buttons)
+
+    def _render_thumbnail(self, row: PreviewRow, get_source_doc) -> Optional[QPixmap]:
+        if not row.source_path or not Path(row.source_path).exists():
+            return None
+        doc = get_source_doc(row.source_path)
+        if doc is None or not (0 <= row.source_page_index < doc.page_count):
+            return None
+        try:
+            page = doc[row.source_page_index]
+            zoom = self._THUMB_WIDTH / max(page.rect.width, 1.0)
+            matrix = fitz.Matrix(zoom, zoom)
+            rendered = page.get_pixmap(matrix=matrix, alpha=False)
+            image = QImage(rendered.samples, rendered.width, rendered.height, rendered.stride, QImage.Format_RGB888)
+            return QPixmap.fromImage(image)
+        except Exception:  # noqa: BLE001 - una pagina irrenderizable no debe romper la vista previa
+            return None

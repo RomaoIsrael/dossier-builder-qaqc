@@ -64,6 +64,94 @@ class PreviewRow:
     start_page: int  # 1-based, pagina estimada de inicio en el dossier final
     page_count: Optional[int]  # None si el documento aun no fue inspeccionado
     document_id: Optional[str] = None
+    source_path: Optional[str] = None  # archivo de origen (plantilla o documento), para vista con miniaturas
+    source_page_index: int = 0  # pagina 0-based dentro de source_path a renderizar como miniatura
+
+
+# -- Indice automatico (opcional) --------------------------------------
+#
+# La paginacion (cuantas paginas de indice se necesitan) depende solo de
+# CUANTAS entradas hay, no del VALOR de los numeros de pagina que se van a
+# imprimir (cada entrada ocupa siempre una linea de alto fijo). Eso permite
+# resolver la referencia circular "el indice necesita saber los numeros de
+# pagina finales, pero insertarlo cambia esos numeros": primero se calcula
+# cuantas paginas de indice va a haber (_estimate_index_page_count, a partir
+# de la cantidad de entradas), luego se suman esas paginas como offset a las
+# posiciones ya calculadas del ensamblado normal, y recien con esos numeros
+# ya definitivos se dibuja el indice (_render_index_document).
+_INDEX_PAGE_WIDTH = 595.0
+_INDEX_PAGE_HEIGHT = 842.0
+_INDEX_MARGIN_TOP = 70.0
+_INDEX_MARGIN_BOTTOM = 50.0
+_INDEX_LINE_HEIGHT = 16.0
+_INDEX_TITLE_HEIGHT = 30.0
+_INDEX_FONT_SIZE = 10
+_INDEX_RIGHT_MARGIN = 60.0
+
+
+def _index_lines_capacity(is_first_page: bool) -> int:
+    usable = _INDEX_PAGE_HEIGHT - _INDEX_MARGIN_TOP - _INDEX_MARGIN_BOTTOM
+    if is_first_page:
+        usable -= _INDEX_TITLE_HEIGHT
+    # +1: la primera entrada de la pagina se dibuja en la posicion inicial
+    # (sin haber "gastado" todavia una altura de linea), asi que en el mismo
+    # espacio disponible entra una entrada mas de las que da la division
+    # entera pura. Debe coincidir exactamente con el bucle de dibujo en
+    # _render_index_document (mismo umbral "y > limite").
+    return max(1, int(usable // _INDEX_LINE_HEIGHT) + 1)
+
+
+def _estimate_index_page_count(entry_count: int) -> int:
+    if entry_count <= 0:
+        return 1
+    pages = 0
+    remaining = entry_count
+    while remaining > 0:
+        remaining -= _index_lines_capacity(is_first_page=(pages == 0))
+        pages += 1
+    return pages
+
+
+def _render_index_document(entries: list[tuple[int, str, int]]) -> fitz.Document:
+    """``entries`` = (nivel, titulo, pagina final 1-based) ya con el offset
+    del indice aplicado. Dibuja "CONTENIDO" + una linea por entrada, con
+    lider de puntos hasta el numero de pagina alineado a la derecha.
+    """
+    doc = fitz.open()
+    page = None
+    page_index = -1
+    y = 0.0
+
+    for level, title, page_number in entries:
+        if page is None or y > _INDEX_PAGE_HEIGHT - _INDEX_MARGIN_BOTTOM:
+            page = doc.new_page(width=_INDEX_PAGE_WIDTH, height=_INDEX_PAGE_HEIGHT)
+            page_index += 1
+            y = _INDEX_MARGIN_TOP
+            if page_index == 0:
+                page.insert_text((50, y), "CONTENIDO", fontsize=16)
+                y += _INDEX_TITLE_HEIGHT
+
+        indent = 50 + (max(1, level) - 1) * 16
+        fontsize = _INDEX_FONT_SIZE + (1 if level == 1 else 0)
+        page.insert_text((indent, y), title, fontsize=fontsize)
+
+        page_str = str(page_number)
+        number_width = fitz.get_text_length(page_str, fontsize=fontsize)
+        number_x = _INDEX_PAGE_WIDTH - _INDEX_RIGHT_MARGIN - number_width
+        title_width = fitz.get_text_length(title, fontsize=fontsize)
+        dots_start_x = indent + title_width + 4
+        if number_x - 4 > dots_start_x:
+            dot_width = fitz.get_text_length(".", fontsize=fontsize) or 3
+            num_dots = max(0, int((number_x - 4 - dots_start_x) / dot_width))
+            page.insert_text((dots_start_x, y), "." * num_dots, fontsize=fontsize, color=(0.6, 0.6, 0.6))
+        page.insert_text((number_x, y), page_str, fontsize=fontsize)
+
+        y += _INDEX_LINE_HEIGHT
+
+    if page is None:
+        doc.new_page(width=_INDEX_PAGE_WIDTH, height=_INDEX_PAGE_HEIGHT)
+
+    return doc
 
 
 def _noop_progress(current: int, total: int, message: str) -> None:  # pragma: no cover - trivial
@@ -100,9 +188,12 @@ class DossierBuilder:
 
         all_docs = list(self._iter_all_documents())
         # Cada documento se cuenta dos veces (preparacion/aplanado + insercion
-        # en el ensamblado), mas una tick por cada pagina de plantilla copiada
-        # y 3 ticks finales (bookmarks, guardado, reporte).
+        # en el ensamblado), mas una tick por cada pagina de plantilla copiada,
+        # 3 ticks finales (bookmarks, guardado, reporte) y 1 mas si se genera
+        # el indice automatico.
         total_steps = 2 * len(all_docs) + template_page_count + 3
+        if self.project.settings.generate_automatic_index:
+            total_steps += 1
         step = 0
 
         def tick(message: str) -> None:
@@ -162,6 +253,13 @@ class DossierBuilder:
                     document_page_position[doc.id] = first_page
                     tick(f"Insertando: {doc.name}")
 
+            # -- 2b. Indice automatico (opcional) -------------------------------
+            index_inserted = False
+            if self.project.settings.generate_automatic_index:
+                inserted_pages = self._insert_automatic_index(out_doc, section_page_position, document_page_position)
+                index_inserted = inserted_pages > 0
+                tick("Generando indice automatico")
+
             # -- 3. Bookmarks -------------------------------------------------
             toc = bookmark_manager.build_toc_for_document(
                 self.project.sections,
@@ -169,6 +267,8 @@ class DossierBuilder:
                 document_page_position,
                 create_document_bookmarks=self.project.settings.create_bookmarks_for_individual_docs,
             )
+            if index_inserted:
+                toc.insert(0, [1, "INDICE", 1])
             pdf_engine.set_toc(out_doc, toc)
             tick("Reconstruyendo bookmarks")
 
@@ -220,6 +320,58 @@ class DossierBuilder:
         )
 
     # ------------------------------------------------------------------
+    def _insert_automatic_index(
+        self,
+        out_doc: fitz.Document,
+        section_page_position: dict[str, int],
+        document_page_position: dict[str, int],
+    ) -> int:
+        """Genera paginas de indice (seccion/subseccion + pagina) y las
+        inserta al comienzo de ``out_doc``, desplazando las posiciones ya
+        calculadas de secciones y documentos. Devuelve la cantidad de
+        paginas de indice insertadas.
+        """
+        entries: list[tuple[int, str, str]] = []  # (nivel, titulo, section_id)
+
+        def walk(nodes: list[SectionNode]) -> None:
+            for node in sorted(nodes, key=lambda n: n.order):
+                if node.create_bookmark and node.id in section_page_position:
+                    title = f"{node.numbering} {node.title}".strip() if node.numbering else node.title
+                    entries.append((node.level, title, node.id))
+                walk(node.children)
+
+        walk(self.project.sections)
+
+        if not entries:
+            return 0
+
+        index_page_count = _estimate_index_page_count(len(entries))
+
+        def render_with_offset(offset: int) -> fitz.Document:
+            rendered = [(level, title, section_page_position[sid] + 1 + offset) for level, title, sid in entries]
+            return _render_index_document(rendered)
+
+        index_doc = render_with_offset(index_page_count)
+        if index_doc.page_count != index_page_count:
+            # Salvaguarda: si la estimacion no coincidio con lo realmente
+            # dibujado (por ejemplo por un cambio futuro en el layout sin
+            # actualizar _estimate_index_page_count), se re-renderiza una
+            # vez mas ya con el numero real de paginas.
+            index_page_count = index_doc.page_count
+            index_doc.close()
+            index_doc = render_with_offset(index_page_count)
+
+        out_doc.insert_pdf(index_doc, start_at=0)
+        index_doc.close()
+
+        for key in list(section_page_position):
+            section_page_position[key] += index_page_count
+        for key in list(document_page_position):
+            document_page_position[key] += index_page_count
+
+        return index_page_count
+
+    # ------------------------------------------------------------------
     def build_preview_outline(self, template_page_count: Optional[int] = None) -> list[PreviewRow]:
         """Vista previa estructural y rapida del dossier: el orden final de
         paginas de plantilla y documentos, SIN abrir ni aplanar ningun PDF
@@ -251,6 +403,8 @@ class DossierBuilder:
                         section_label="",
                         start_page=running_page,
                         page_count=1,
+                        source_path=self.project.template_path or None,
+                        source_page_index=page_index,
                     )
                 )
                 running_page += 1
@@ -265,6 +419,8 @@ class DossierBuilder:
                         start_page=running_page,
                         page_count=pages,
                         document_id=doc.id,
+                        source_path=doc.flattened_path or doc.source_path or None,
+                        source_page_index=0,
                     )
                 )
                 running_page += pages if pages else 1

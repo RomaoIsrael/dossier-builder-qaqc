@@ -10,6 +10,8 @@ import traceback
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.services.logger import setup_logging, get_logger
+from app.services.settings import SettingsService
+from app.ui.theme import apply_theme
 
 logger = get_logger("main")
 
@@ -48,6 +50,9 @@ def main() -> int:
     app.setOrganizationName("DossierBuilderQAQC")
 
     _install_exception_hook(app)
+
+    settings_service = SettingsService()
+    apply_theme(app, settings_service.settings.theme)
 
     from app.ui.main_window import MainWindow  # import diferido: requiere QApplication ya creada
 

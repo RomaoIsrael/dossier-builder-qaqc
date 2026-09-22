@@ -107,9 +107,11 @@ app/
     ui/
         main_window.py       Ventana principal: arbol de secciones, lista de
                               documentos, toolbar, generacion en QThread
-        dialogs.py            Metadatos, configuracion, resultados de
-                              validacion, nueva subseccion, vista previa PDF
+        dialogs.py            Metadatos, configuracion, preferencias, resultados
+                              de validacion, nueva subseccion, vista previa PDF/
+                              estructural/miniaturas, distribucion automatica
         widgets.py            SectionTreeWidget, DocumentListWidget (drag&drop)
+        theme.py               Hoja de estilos QSS para el tema oscuro/claro
 
     core/
         project.py            Crear/guardar/abrir/duplicar proyectos (JSON)
@@ -290,20 +292,40 @@ página exacta tras las inserciones.
   el número de páginas ya detectado al agregar cada documento), por lo que
   es instantánea incluso en dossiers de cientos de páginas.
 
-## Roadmap / Fase 3
+## Ya implementado (Fase 3)
+
+- **Índice automático con paginación** (`DossierBuilder._insert_automatic_index`,
+  opción "Generar índice automático" en Configuración del proyecto): genera
+  una página de índice (sección/subsección + número de página) y la inserta
+  al comienzo del dossier final, **además** del índice existente de la
+  plantilla (que no se toca). Resuelve la referencia circular
+  "el índice necesita los números de página finales, pero insertarlo cambia
+  esos números" calculando primero cuántas páginas de índice se necesitan
+  (depende solo de la cantidad de entradas, no de los números en sí),
+  desplazando las posiciones ya calculadas por esa cantidad, y recién ahí
+  dibujando el índice con los números definitivos — con una salvaguarda que
+  re-renderiza si la estimación llegara a no coincidir con el resultado real.
+- **Vista previa con miniaturas reales** (acción de toolbar "Vista previa con
+  miniaturas", `DossierThumbnailPreviewDialog`): renderiza una imagen por
+  cada página de la plantilla y por la primera página de cada documento, en
+  el orden final del dossier — sin ensamblar ni renderizar el dossier
+  completo página por página (inviable en dossiers de cientos de páginas).
+- **Tema oscuro / claro** (`app/ui/theme.py`, acción de toolbar
+  "Preferencias"): se guarda en la configuración global de la aplicación y
+  se aplica de inmediato al cambiarlo, sin reiniciar.
+
+## Roadmap / Fase 4
 
 No implementado todavía, pendiente para una siguiente iteración:
 
-- Vista previa con miniaturas reales (imágenes) de todas las páginas del
-  dossier ya ensamblado, además de la vista estructural ya disponible.
-- Índice automático generado (sección/subsección + número de página), como
-  alternativa a respetar el índice de la plantilla.
-- Tema oscuro / claro configurable y soporte multi-idioma.
+- Soporte multi-idioma (actualmente solo español).
 - Validación estructural avanzada de PDF con `pikepdf`/`qpdf` (reparación
   de PDF dañados, análisis más profundo de PAdES).
 - Bookmarks individuales por documento configurables desde la UI (el motor
   ya lo soporta vía `settings.create_bookmarks_for_individual_docs`).
 - Reconocimiento y validación de vigencia de certificados en firmas PAdES.
+- Miniaturas de TODAS las páginas de cada documento (hoy solo la primera),
+  con carga diferida (lazy) para no saturar la memoria en dossiers enormes.
 
 ## Limitaciones conocidas del MVP
 

@@ -5,7 +5,13 @@ import pytest
 
 from app.core import pdf_engine
 from app.core.bookmark_manager import build_section_tree_from_toc
-from app.core.dossier_builder import CancelledError, DossierBuilder, DossierGenerationError
+from app.core.dossier_builder import (
+    CancelledError,
+    DossierBuilder,
+    DossierGenerationError,
+    _estimate_index_page_count,
+    _render_index_document,
+)
 from app.models.document_model import DocumentItem
 from app.models.project_model import Project
 from app.models.section_model import SectionNode
@@ -173,3 +179,73 @@ def test_build_preview_outline_handles_uninspected_documents(populated_project):
     doc_rows = [r for r in rows if r.kind == "doc"]
     assert all(r.page_count is None for r in doc_rows)
     assert len(doc_rows) == 5
+
+
+def test_estimate_index_page_count_fits_on_one_page_for_few_entries():
+    assert _estimate_index_page_count(6) == 1
+    assert _estimate_index_page_count(0) == 1
+
+
+def test_estimate_index_page_count_matches_actual_render_for_many_entries():
+    entry_count = 120
+    estimated = _estimate_index_page_count(entry_count)
+    assert estimated > 1
+
+    fake_entries = [(1 if i % 5 == 0 else 2, f"Seccion de prueba {i}", i + 1) for i in range(entry_count)]
+    doc = _render_index_document(fake_entries)
+    try:
+        assert doc.page_count == estimated
+    finally:
+        doc.close()
+
+
+def test_generate_with_automatic_index_shifts_bookmarks_and_lists_correct_pages(populated_project, tmp_path):
+    project, dyn = populated_project
+    project.settings.generate_automatic_index = True
+    builder = DossierBuilder(project)
+
+    result = builder.generate(str(tmp_path))
+
+    # 17 paginas del cuerpo (ver test_generate_produces_expected_total_pages)
+    # + 1 pagina de indice (6 entradas caben en una sola pagina).
+    assert result.total_pages == 18
+
+    out_doc = fitz.open(result.output_pdf_path)
+    try:
+        toc = out_doc.get_toc(simple=True)
+        index_page_text = out_doc[0].get_text()
+    finally:
+        out_doc.close()
+
+    toc_by_title = {title: page for _, title, page in toc}
+
+    assert toc_by_title["INDICE"] == 1
+    # Las mismas posiciones que sin indice (ver test_generate_bookmarks_point_to_correct_pages)
+    # pero desplazadas +1 pagina por la pagina de indice insertada al inicio.
+    assert toc_by_title["1 CONCILIACION DE MATERIALES"] == 4
+    assert toc_by_title["1.1 DIAGRAMAS MECANICOS"] == 5
+    assert toc_by_title["1.2 PULL & RUN BES"] == 10
+    assert toc_by_title["2 CERTIFICADOS DE CALIDAD"] == 14
+    assert toc_by_title["3 ANEXOS"] == 15
+    assert toc_by_title["REPORTES FOTOGRAFICOS"] == 17
+
+    # La pagina de indice impresa debe mostrar exactamente esos mismos numeros.
+    assert "CONTENIDO" in index_page_text
+    assert "1 CONCILIACION DE MATERIALES" in index_page_text
+    assert "4" in index_page_text
+
+
+def test_generate_without_automatic_index_has_no_indice_bookmark(populated_project, tmp_path):
+    project, dyn = populated_project
+    assert project.settings.generate_automatic_index is False
+    builder = DossierBuilder(project)
+
+    result = builder.generate(str(tmp_path))
+    assert result.total_pages == 17
+
+    out_doc = fitz.open(result.output_pdf_path)
+    try:
+        toc_titles = {title for _, title, _ in out_doc.get_toc(simple=True)}
+    finally:
+        out_doc.close()
+    assert "INDICE" not in toc_titles
