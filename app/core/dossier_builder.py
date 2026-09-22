@@ -180,9 +180,13 @@ class DossierBuilder:
     def generate(
         self,
         output_root: str,
+        output_filename: Optional[str] = None,
         progress_cb: Optional[ProgressCallback] = None,
         cancel_check: Optional[CancelCheck] = None,
     ) -> GenerationResult:
+        """``output_filename``, si se da, reemplaza el nombre calculado con
+        ``settings.output_naming_pattern`` (sin necesidad de incluir la
+        extension ``.pdf``, se agrega sola)."""
         progress_cb = progress_cb or _noop_progress
         cancel_check = cancel_check or (lambda: False)
 
@@ -342,9 +346,12 @@ class DossierBuilder:
             pdf_engine.set_metadata(out_doc, self._build_pdf_metadata())
 
             # -- 5. Guardar -------------------------------------------------------
-            output_name = render_naming_pattern(
-                self.project.settings.output_naming_pattern, self.project.metadata.as_naming_context()
-            )
+            if output_filename and output_filename.strip():
+                output_name = safe_filename(Path(output_filename.strip()).stem)
+            else:
+                output_name = render_naming_pattern(
+                    self.project.settings.output_naming_pattern, self.project.metadata.as_naming_context()
+                )
             output_path = dirs["final"] / f"{output_name}.pdf"
             pdf_engine.save_document(out_doc, str(output_path), optimize=True)
             tick("Guardando dossier final")

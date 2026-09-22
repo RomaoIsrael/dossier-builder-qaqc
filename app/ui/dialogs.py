@@ -361,8 +361,13 @@ class PdfPreviewDialog(QDialog):
         super().closeEvent(event)
 
 
-def _flatten_section_options(sections: list[SectionNode]) -> list[tuple[str, str]]:
-    """Devuelve pares (etiqueta, section_id) en el mismo orden que el arbol."""
+def flatten_section_options(sections: list[SectionNode]) -> list[tuple[str, str]]:
+    """Devuelve pares (etiqueta, section_id) en el mismo orden que el arbol.
+
+    Se usa donde sea que la UI necesite mostrar una lista plana de todas las
+    secciones/subsecciones para elegir una (distribucion automatica, mover
+    o copiar un documento a otra seccion, etc.).
+    """
     options: list[tuple[str, str]] = []
     for root in sections:
         for node in root.iter_all_sections():
@@ -383,7 +388,7 @@ class AutoDistributeDialog(QDialog):
         self.resize(720, 480)
 
         self._file_paths = file_paths
-        self._section_options = _flatten_section_options(sections)
+        self._section_options = flatten_section_options(sections)
         suggestions = suggest_sections_for_files([Path(p).name for p in file_paths], sections)
 
         layout = QVBoxLayout(self)

@@ -1,6 +1,7 @@
 """Ventana principal de Dossier Builder QA/QC."""
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -47,9 +48,11 @@ from app.ui.dialogs import (
     PreferencesDialog,
     SettingsDialog,
     ValidationResultsDialog,
+    flatten_section_options,
 )
 from app.ui.theme import apply_theme
 from app.ui.widgets import DocumentListWidget, SectionTreeWidget
+from app.utils.naming import render_naming_pattern
 
 logger = get_logger("ui.main_window")
 
@@ -61,10 +64,11 @@ class GenerationWorker(QThread):
     finished_ok = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, project, output_root: str):
+    def __init__(self, project, output_root: str, output_filename: Optional[str] = None):
         super().__init__()
         self.project = project
         self.output_root = output_root
+        self.output_filename = output_filename
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -75,6 +79,7 @@ class GenerationWorker(QThread):
         try:
             result = builder.generate(
                 self.output_root,
+                output_filename=self.output_filename,
                 progress_cb=lambda cur, total, msg: self.progress.emit(cur, total, msg),
                 cancel_check=lambda: self._cancelled,
             )
@@ -113,15 +118,30 @@ class MainWindow(QMainWindow):
     # Construccion de la interfaz
     # ------------------------------------------------------------------
     def _build_toolbar(self) -> None:
-        toolbar = QToolBar("Principal")
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(18, 18))
-        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.addToolBar(toolbar)
+        # Se usan dos QToolBar en filas separadas (en vez de una sola barra
+        # larga) para que quepan todas las acciones sin depender del boton
+        # de desborde "»" de Qt, que ademas es dificil de ver en tema oscuro
+        # (ver estilo de QToolButton#qt_toolbar_ext_button en theme.py).
+        toolbar_top = QToolBar("Proyecto")
+        toolbar_top.setObjectName("toolbarProyecto")
+        toolbar_top.setMovable(False)
+        toolbar_top.setFloatable(False)
+        toolbar_top.setIconSize(QSize(18, 18))
+        toolbar_top.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.addToolBar(toolbar_top)
+        self.addToolBarBreak()
+
+        toolbar_bottom = QToolBar("Dossier")
+        toolbar_bottom.setObjectName("toolbarDossier")
+        toolbar_bottom.setMovable(False)
+        toolbar_bottom.setFloatable(False)
+        toolbar_bottom.setIconSize(QSize(18, 18))
+        toolbar_bottom.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.addToolBar(toolbar_bottom)
 
         style = self.style()
 
-        def add_action(text: str, handler, icon: Optional[QStyle.StandardPixmap] = None) -> QAction:
+        def add_action(toolbar: QToolBar, text: str, handler, icon: Optional[QStyle.StandardPixmap] = None) -> QAction:
             action = QAction(text, self)
             if icon is not None:
                 action.setIcon(style.standardIcon(icon))
@@ -129,21 +149,23 @@ class MainWindow(QMainWindow):
             toolbar.addAction(action)
             return action
 
-        add_action("Nuevo proyecto", self.new_project, QStyle.SP_FileIcon)
-        add_action("Abrir proyecto", self.open_project, QStyle.SP_DialogOpenButton)
-        add_action("Guardar", self.save_project, QStyle.SP_DialogSaveButton)
-        add_action("Guardar como...", self.save_project_as, QStyle.SP_DriveFDIcon)
-        toolbar.addSeparator()
-        add_action("Metadatos", self.edit_metadata, QStyle.SP_FileDialogInfoView)
-        add_action("Configuracion", self.edit_settings, QStyle.SP_FileDialogDetailedView)
-        add_action("Preferencias", self.edit_preferences, QStyle.SP_ComputerIcon)
-        toolbar.addSeparator()
-        add_action("Distribuir documentos (auto)", self.auto_distribute_documents, QStyle.SP_FileDialogListView)
-        add_action("Vista previa del dossier", self.preview_dossier_outline, QStyle.SP_FileDialogContentsView)
-        add_action("Vista previa con miniaturas", self.preview_dossier_thumbnails, QStyle.SP_DirIcon)
-        toolbar.addSeparator()
-        add_action("Validar dossier", self.validate_dossier, QStyle.SP_DialogApplyButton)
-        self.generate_action = add_action("Generar dossier", self.generate_dossier, QStyle.SP_MediaPlay)
+        # Fila 1: gestion del proyecto (archivo, metadatos, configuracion).
+        add_action(toolbar_top, "Nuevo proyecto", self.new_project, QStyle.SP_FileIcon)
+        add_action(toolbar_top, "Abrir proyecto", self.open_project, QStyle.SP_DialogOpenButton)
+        add_action(toolbar_top, "Guardar", self.save_project, QStyle.SP_DialogSaveButton)
+        add_action(toolbar_top, "Guardar como...", self.save_project_as, QStyle.SP_DriveFDIcon)
+        toolbar_top.addSeparator()
+        add_action(toolbar_top, "Metadatos", self.edit_metadata, QStyle.SP_FileDialogInfoView)
+        add_action(toolbar_top, "Configuracion", self.edit_settings, QStyle.SP_FileDialogDetailedView)
+        add_action(toolbar_top, "Preferencias", self.edit_preferences, QStyle.SP_ComputerIcon)
+
+        # Fila 2: flujo de trabajo del dossier (distribuir, revisar, generar).
+        add_action(toolbar_bottom, "Distribuir documentos (auto)", self.auto_distribute_documents, QStyle.SP_FileDialogListView)
+        add_action(toolbar_bottom, "Vista previa del dossier", self.preview_dossier_outline, QStyle.SP_FileDialogContentsView)
+        add_action(toolbar_bottom, "Vista previa con miniaturas", self.preview_dossier_thumbnails, QStyle.SP_DirIcon)
+        toolbar_bottom.addSeparator()
+        add_action(toolbar_bottom, "Validar dossier", self.validate_dossier, QStyle.SP_DialogApplyButton)
+        self.generate_action = add_action(toolbar_bottom, "Generar dossier", self.generate_dossier, QStyle.SP_MediaPlay)
 
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
@@ -153,6 +175,7 @@ class MainWindow(QMainWindow):
         self.tree.section_selected.connect(self._on_section_selected)
         self.tree.files_dropped_on_section.connect(self._on_files_dropped_on_section)
         self.tree.customContextMenuRequested.connect(self._show_section_context_menu)
+        self.tree.delete_requested.connect(self.remove_section)
         splitter.addWidget(self.tree)
 
         # -- Panel central: documentos de la seccion seleccionada -----------
@@ -168,6 +191,7 @@ class MainWindow(QMainWindow):
         self.doc_list.itemDoubleClicked.connect(lambda _item: self.preview_selected_document())
         self.doc_list.files_dropped.connect(self._on_files_dropped_on_document_list)
         self.doc_list.customContextMenuRequested.connect(self._show_document_context_menu)
+        self.doc_list.delete_requested.connect(self.remove_selected_documents)
         center_layout.addWidget(self.doc_list, stretch=1)
 
         buttons_row1 = QHBoxLayout()
@@ -673,6 +697,62 @@ class MainWindow(QMainWindow):
         self.project.touch()
         self._refresh_ui()
 
+    def _move_or_copy_selected_documents(self, copy: bool) -> None:
+        """Mueve (o copia) los documentos seleccionados a otra seccion,
+        sin tener que eliminarlos y volver a agregarlos desde cero."""
+        section = self._current_section()
+        if section is None:
+            return
+        selected_ids = set(self.doc_list.selected_document_ids())
+        if not selected_ids:
+            return
+        selected_docs = [d for d in section.documents if d.id in selected_ids]
+        if not selected_docs:
+            return
+
+        options = flatten_section_options(self.project.sections)
+        if not options:
+            return
+        labels = [label for label, _ in options]
+        current_label = next((label for label, sid in options if sid == section.id), labels[0])
+        start_index = labels.index(current_label) if current_label in labels else 0
+
+        title = "Copiar documento(s)" if copy else "Mover documento(s)"
+        chosen_label, ok = QInputDialog.getItem(
+            self, title, "Seccion destino:", labels, current=start_index, editable=False
+        )
+        if not ok:
+            return
+        target_id = next((sid for label, sid in options if label == chosen_label), None)
+        if target_id is None:
+            return
+        if target_id == section.id:
+            QMessageBox.information(self, title, "Esa ya es la seccion actual del documento.")
+            return
+        target_section = self.project.find_section(target_id)
+        if target_section is None:
+            return
+
+        if copy:
+            for doc in selected_docs:
+                new_doc = DocumentItem.from_dict(doc.to_dict())
+                new_doc.id = str(uuid.uuid4())
+                new_doc.order = len(target_section.documents)
+                target_section.documents.append(new_doc)
+        else:
+            section.documents = [d for d in section.documents if d.id not in selected_ids]
+            for i, doc in enumerate(section.documents):
+                doc.order = i
+            for doc in selected_docs:
+                doc.order = len(target_section.documents)
+                target_section.documents.append(doc)
+
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(target_id)
+        verb = "copiado(s)" if copy else "movido(s)"
+        self.statusBar().showMessage(f"{len(selected_docs)} documento(s) {verb} a '{chosen_label}'.", 5000)
+
     def _selected_document(self) -> Optional[DocumentItem]:
         section = self._current_section()
         if section is None:
@@ -777,6 +857,9 @@ class MainWindow(QMainWindow):
         menu.addAction("Subir", lambda: self._move_selected(-1))
         menu.addAction("Bajar", lambda: self._move_selected(1))
         menu.addSeparator()
+        menu.addAction("Mover a seccion...", lambda: self._move_or_copy_selected_documents(copy=False))
+        menu.addAction("Copiar a seccion...", lambda: self._move_or_copy_selected_documents(copy=True))
+        menu.addSeparator()
         menu.addAction("Eliminar", self.remove_selected_documents)
 
         menu.exec(self.doc_list.viewport().mapToGlobal(pos))
@@ -845,13 +928,25 @@ class MainWindow(QMainWindow):
             return
         self.project.settings.output_dir = output_root
 
+        suggested_name = render_naming_pattern(
+            self.project.settings.output_naming_pattern, self.project.metadata.as_naming_context()
+        )
+        output_filename, ok = QInputDialog.getText(
+            self,
+            "Nombre del dossier",
+            "Nombre o codigo con el que se guardara el archivo generado:",
+            text=suggested_name,
+        )
+        if not ok or not output_filename.strip():
+            return
+
         self._progress_dialog = QProgressDialog("Preparando generacion...", "Cancelar", 0, 100, self)
         self._progress_dialog.setWindowTitle("Generando dossier")
         self._progress_dialog.setWindowModality(Qt.WindowModal)
         self._progress_dialog.setMinimumDuration(0)
         self._progress_dialog.canceled.connect(self._cancel_generation)
 
-        self._generation_worker = GenerationWorker(self.project, output_root)
+        self._generation_worker = GenerationWorker(self.project, output_root, output_filename=output_filename)
         self._generation_worker.progress.connect(self._on_generation_progress)
         self._generation_worker.finished_ok.connect(self._on_generation_finished)
         self._generation_worker.failed.connect(self._on_generation_failed)

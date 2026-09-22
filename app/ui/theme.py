@@ -51,6 +51,23 @@ QToolBar::separator {{
     width: 1px;
     margin: 6px 6px;
 }}
+/* Boton de desborde ("»") que Qt agrega automaticamente cuando una
+   QToolBar no entra en el ancho disponible. Se le da un fondo y borde
+   propios (en vez de depender del color nativo de la flecha, que en el
+   tema oscuro queda casi invisible sobre el fondo oscuro) para que sea
+   facil de ubicar y presionar en cualquier tema. */
+QToolBar QToolButton#qt_toolbar_ext_button {{
+    background-color: {c['accent_soft']};
+    border: 1px solid {c['accent']};
+    border-radius: 4px;
+    min-width: 22px;
+    min-height: 22px;
+    padding: 2px;
+    margin-left: 4px;
+}}
+QToolBar QToolButton#qt_toolbar_ext_button:hover {{
+    background-color: {c['accent']};
+}}
 
 /* -- Botones ------------------------------------------------------------- */
 QPushButton {{

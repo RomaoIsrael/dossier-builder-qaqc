@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem
 
 from app.models.document_model import DocumentItem, DocumentStatus
@@ -61,6 +61,7 @@ class DocumentListWidget(QListWidget):
 
     order_changed = Signal()
     files_dropped = Signal(list)  # list[str]: rutas .pdf soltadas desde fuera
+    delete_requested = Signal()  # tecla Supr/Backspace con documento(s) seleccionados
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,6 +70,13 @@ class DocumentListWidget(QListWidget):
         self.setAlternatingRowColors(True)
         self.setAcceptDrops(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - nombre Qt
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selectedItems():
+            self.delete_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - nombre Qt
         if _pdf_paths_from_mime(event.mimeData()):
@@ -121,6 +129,7 @@ class SectionTreeWidget(QTreeWidget):
 
     section_selected = Signal(str)
     files_dropped_on_section = Signal(str, list)  # section_id, list[str]
+    delete_requested = Signal()  # tecla Supr/Backspace con una seccion seleccionada
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -129,6 +138,13 @@ class SectionTreeWidget(QTreeWidget):
         self.itemSelectionChanged.connect(self._on_selection_changed)
         self.setAcceptDrops(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - nombre Qt
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selectedItems():
+            self.delete_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def load_sections(self, sections: list[SectionNode]) -> None:
         self.clear()

@@ -403,6 +403,33 @@ página exacta tras las inserciones.
   no crea ninguna página nueva, solo agrega una entrada de bookmark por
   documento (anidada bajo su sección) para poder saltar directo a él desde
   el panel de marcadores del lector de PDF.
+- **Barra de herramientas en dos filas**: `MainWindow._build_toolbar()` ahora
+  usa dos `QToolBar` (una fila para "Proyecto": nuevo/abrir/guardar/guardar
+  como/metadatos/configuración/preferencias, y otra para "Dossier":
+  distribuir/vista previa/miniaturas/validar/generar) en vez de una sola
+  barra larga. Al achicar la ventana, cada fila se ajusta de forma
+  independiente y es mucho menos probable que aparezca el botón de
+  desborde "»". Cuando sí aparece (ventanas muy angostas), ahora tiene
+  fondo y borde propios en `theme.py` (`QToolButton#qt_toolbar_ext_button`)
+  para que se vea con claridad también en tema oscuro, en vez de la flecha
+  casi invisible de antes.
+- **Nombre/código del dossier al generar**: `generate_dossier()` ahora
+  pregunta, justo antes de iniciar la generación, con qué nombre o código
+  guardar el PDF final (prellenado con el nombre calculado según el patrón
+  de nomenclatura configurado, pero editable). `DossierBuilder.generate()`
+  acepta un nuevo parámetro opcional `output_filename` que, si se indica,
+  reemplaza el nombre calculado automáticamente.
+- **Mover o copiar documentos entre secciones**: en el menú de clic derecho
+  de la lista de documentos, "Mover a sección..." y "Copiar a sección..."
+  permiten reubicar uno o varios documentos seleccionados en cualquier otra
+  sección del árbol sin tener que eliminarlos y volver a agregarlos desde
+  cero. "Copiar" crea una copia independiente del documento (nuevo id) en
+  la sección destino; "Mover" lo reubica conservando su configuración
+  (tratamiento de firma, bookmarks, etc.).
+- **Tecla Suprimir/Backspace para eliminar**: tanto la lista de documentos
+  como el árbol de secciones responden ahora a la tecla Supr (o Retroceso)
+  con la selección activa, sin necesidad de usar el botón o el menú
+  contextual.
 
 ## Roadmap / Fase 4
 
