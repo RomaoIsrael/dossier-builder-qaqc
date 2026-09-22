@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import fitz
 import pytest
@@ -13,7 +14,7 @@ from app.core.dossier_builder import (
     _estimate_index_page_count,
     _render_index_document,
 )
-from app.models.document_model import DocumentItem
+from app.models.document_model import DocumentItem, SignatureTreatment
 from app.models.project_model import Project
 from app.models.section_model import SectionNode
 
@@ -365,3 +366,38 @@ def test_generate_with_frequent_flush_produces_identical_result(populated_projec
     assert toc_by_title["2 CERTIFICADOS DE CALIDAD"] == 13
     assert toc_by_title["3 ANEXOS"] == 14
     assert toc_by_title["REPORTES FOTOGRAFICOS"] == 16
+
+
+def test_flattened_document_backup_is_renamed_with_start_page(populated_project, tmp_path):
+    """Los archivos con firma que se aplanan deben quedar, al terminar la
+    generacion, con el prefijo 'pag {N}_' (N = pagina donde el documento
+    empieza en el dossier final) tanto en su copia de respaldo
+    (00_ORIGINALES_FIRMADOS/) como en su version aplanada
+    (01_DOCUMENTOS_PROCESADOS/).
+    """
+    project, dyn = populated_project
+    sec_1_1 = _find(project.sections, "1.1")
+    target_doc = sec_1_1.documents[0]
+    target_doc.signature_treatment = SignatureTreatment.FLATTEN
+
+    builder = DossierBuilder(project)
+    result = builder.generate(str(tmp_path))
+    assert result.flattened_count == 1
+
+    # doc 1.1a empieza en la pagina 5 (1-based): posicion 4 (0-based) segun
+    # test_generate_bookmarks_point_to_correct_pages / build_preview_outline.
+    assert target_doc.backup_path is not None
+    assert Path(target_doc.backup_path).name.startswith("pag 5_")
+    assert Path(target_doc.backup_path).exists()
+    assert target_doc.name in Path(target_doc.backup_path).name
+
+    assert target_doc.flattened_path is not None
+    assert Path(target_doc.flattened_path).name.startswith("pag 5_")
+    assert Path(target_doc.flattened_path).exists()
+
+    manifest = json.loads(
+        (tmp_path / "Proyecto integracion" / "03_REPORTES" / "manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_entry = next(d for d in manifest["documents"] if d["name"] == target_doc.name)
+    assert manifest_entry["backup_path"] == target_doc.backup_path
+    assert manifest_entry["flattened_path"] == target_doc.flattened_path

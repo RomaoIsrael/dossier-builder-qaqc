@@ -358,6 +358,12 @@ class DossierBuilder:
                 except OSError:
                     logger.warning("No se pudo borrar el archivo temporal '%s'", temp_path)
 
+        # -- 5b. Renombrar originales firmados con su pagina de inicio -------
+        # Recien aqui se conoce con certeza la pagina final de cada
+        # documento (el ensamblado, incluido el indice automatico si
+        # aplica, ya termino), asi que el renombrado se hace al final.
+        self._rename_signed_originals_with_page_numbers(all_docs, document_page_position)
+
         # -- 6. Manifest + reporte ------------------------------------------
         sha_final = sha256_file(output_path)
         final_page_count = pdf_engine.get_page_count(str(output_path))
@@ -568,6 +574,7 @@ class DossierBuilder:
             backup_path = dirs["backup"] / f"{safe_filename(doc.name)}"
             if not backup_path.exists():
                 shutil.copy2(source, backup_path)
+            doc.backup_path = str(backup_path)
 
         flat_name = f"{safe_filename(Path(doc.name).stem)}__flat.pdf"
         flat_path = dirs["processed"] / flat_name
@@ -589,6 +596,44 @@ class DossierBuilder:
         doc.flatten_dpi = self.project.settings.flatten_dpi
         doc.sha256_flattened = sha256_file(flat_path)
         doc.status = DocumentStatus.FLATTENED
+
+    def _rename_signed_originals_with_page_numbers(
+        self,
+        all_docs: list[tuple[SectionNode, DocumentItem]],
+        document_page_position: dict[str, int],
+    ) -> None:
+        """Renombra la copia de respaldo (00_ORIGINALES_FIRMADOS/) y la
+        version aplanada (01_DOCUMENTOS_PROCESADOS/) de cada documento con
+        firma, anteponiendo la pagina donde termino en el dossier final:
+        ``pag {N}_{nombre_original}.pdf``. Solo puede hacerse aqui, una vez
+        terminado el ensamblado (incluido el indice automatico si aplica),
+        que es cuando se conoce la pagina real de cada documento.
+        """
+        for _section, doc in all_docs:
+            start_page = document_page_position.get(doc.id)
+            if start_page is None:
+                continue
+            page_number = start_page + 1
+
+            if doc.backup_path:
+                doc.backup_path = self._rename_with_page_prefix(doc.backup_path, page_number)
+            if doc.flattened_path:
+                doc.flattened_path = self._rename_with_page_prefix(doc.flattened_path, page_number)
+
+    def _rename_with_page_prefix(self, path_str: str, page_number: int) -> str:
+        path = Path(path_str)
+        if not path.exists():
+            return path_str
+        new_name = safe_filename(f"pag {page_number}_{path.name}")
+        if new_name == path.name:
+            return path_str
+        new_path = path.with_name(new_name)
+        try:
+            path.rename(new_path)
+            return str(new_path)
+        except OSError as exc:
+            logger.warning("No se pudo renombrar '%s' con su pagina de inicio: %s", path, exc)
+            return path_str
 
     def _build_blocks(self, template_page_count: int) -> list[tuple]:
         """Construye la secuencia ordenada de bloques (paginas de plantilla,
@@ -658,6 +703,7 @@ class DossierBuilder:
                     "sha256_original": doc.sha256_original,
                     "flattened": doc.will_be_flattened,
                     "flattened_path": doc.flattened_path,
+                    "backup_path": doc.backup_path,
                     "sha256_flattened": doc.sha256_flattened,
                     "flatten_dpi": doc.flatten_dpi,
                     "has_signature": doc.has_signature,

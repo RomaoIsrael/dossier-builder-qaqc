@@ -229,12 +229,24 @@ plataformas de ventana) y `--collect-submodules fitz`.
 ```
 <carpeta de salida elegida>/<Nombre del proyecto>/
     00_ORIGINALES_FIRMADOS/     Copias intactas de los PDF firmados originales
-    01_DOCUMENTOS_PROCESADOS/   Versiones aplanadas (rasterizadas) de esos PDF
+                                 renombradas como "pag {N}_{nombre_original}.pdf"
+                                 (N = pagina donde ese documento empieza en el
+                                 dossier final; ver mas abajo)
+    01_DOCUMENTOS_PROCESADOS/   Versiones aplanadas (rasterizadas) de esos PDF,
+                                 con el mismo prefijo "pag {N}_"
     02_DOSSIER_FINAL/           El PDF final del dossier
     03_REPORTES/
-        manifest.json            SHA-256 de cada archivo, totales, avisos
-        Reporte_Generacion.pdf   Reporte legible de la generacion
+        manifest.json            SHA-256 de cada archivo, totales, avisos,
+                                 pagina de inicio y rutas (backup/aplanado)
+                                 de cada documento
+        Reporte_Generacion.pdf   Reporte legible de la generacion, incluye
+                                 el listado "pag. N  NOMBRE_ARCHIVO.pdf" de
+                                 todos los documentos originales
 ```
+
+El prefijo `pag {N}_` solo puede calcularse **despues** de armar el dossier
+completo (recien ahi se sabe en que pagina termino cada documento), asi que
+el renombrado ocurre como ultimo paso de la generacion, no al aplanar.
 
 ## Proyecto de ejemplo
 
@@ -367,6 +379,12 @@ página exacta tras las inserciones.
     individuales en el índice" (en Configuración, junto a "Generar índice
     automático"), el índice automático lista cada documento anidado bajo su
     sección, con su página de inicio.
+  - **Archivos originales firmados renombrados**: las copias en
+    `00_ORIGINALES_FIRMADOS/` y `01_DOCUMENTOS_PROCESADOS/` quedan como
+    `pag {N}_{nombre_original}.pdf` (ej. `pag 56_Certificado_API.pdf`),
+    calculado después de armar el dossier completo (`DossierBuilder`
+    `_rename_signed_originals_with_page_numbers`). `manifest.json` refleja
+    las rutas ya renombradas en `backup_path` y `flattened_path`.
 
 ## Roadmap / Fase 4
 

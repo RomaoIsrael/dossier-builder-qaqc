@@ -52,6 +52,10 @@ class DocumentItem:
     flattened_path: Optional[str] = None
     sha256_flattened: Optional[str] = None
     flatten_dpi: Optional[int] = None
+    # Copia intacta del original firmado en 00_ORIGINALES_FIRMADOS/. Se
+    # renombra con el prefijo "pag N_" una vez conocida la pagina de
+    # inicio real del documento en el dossier final (ver DossierBuilder).
+    backup_path: Optional[str] = None
 
     @property
     def name(self) -> str:
