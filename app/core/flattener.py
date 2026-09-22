@@ -63,14 +63,13 @@ def flatten_pdf(input_path: str, output_path: str, options: FlattenOptions | Non
         for page_index in range(src.page_count):
             page = src[page_index]
 
-            # page.rect es el mediabox SIN aplicar /Rotate. Si la pagina esta
-            # rotada 90/270, el pixmap renderizado queda "acostado" respecto
-            # al mediabox, asi que hay que intercambiar ancho/alto de la
-            # pagina de salida para que coincida con lo que se ve.
-            rotation = page.rotation % 360
+            # page.rect ya devuelve el rectangulo "visual" de la pagina, es
+            # decir, con el ancho/alto intercambiados si /Rotate es 90 o 270
+            # (a diferencia de page.mediabox, que es el tamano crudo sin
+            # rotacion). get_pixmap() tambien respeta la rotacion al
+            # renderizar, asi que ambos ya estan en el mismo sistema de
+            # coordenadas: no hace falta (ni hay que) intercambiar nada aqui.
             page_width, page_height = page.rect.width, page.rect.height
-            if rotation in (90, 270):
-                page_width, page_height = page_height, page_width
 
             pix = page.get_pixmap(matrix=matrix, alpha=False)
 
