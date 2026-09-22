@@ -1,0 +1,653 @@
+"""Ventana principal de Dossier Builder QA/QC."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from PySide6.QtCore import QThread, QUrl, Qt, Signal
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QProgressDialog,
+    QPushButton,
+    QSplitter,
+    QStatusBar,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.core import pdf_engine
+from app.core.bookmark_manager import build_section_tree_from_toc, renumber_sections
+from app.core.dossier_builder import CancelledError, DossierBuilder, DossierGenerationError, GenerationResult
+from app.core.project import ProjectError, ProjectService
+from app.core.signature_detector import detect_signatures
+from app.core.validator import validate_project
+from app.models.document_model import DocumentItem, DocumentStatus, SignatureTreatment
+from app.models.section_model import SectionNode
+from app.services.database import DatabaseService
+from app.services.logger import get_logger
+from app.services.settings import SettingsService
+from app.ui.dialogs import (
+    MetadataDialog,
+    NewSectionDialog,
+    PdfPreviewDialog,
+    SettingsDialog,
+    ValidationResultsDialog,
+)
+from app.ui.widgets import DocumentListWidget, SectionTreeWidget
+
+logger = get_logger("ui.main_window")
+
+
+class GenerationWorker(QThread):
+    """Ejecuta DossierBuilder.generate() en un hilo aparte para no congelar la UI."""
+
+    progress = Signal(int, int, str)
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, project, output_root: str):
+        super().__init__()
+        self.project = project
+        self.output_root = output_root
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:  # noqa: D102 - metodo estandar de QThread
+        builder = DossierBuilder(self.project)
+        try:
+            result = builder.generate(
+                self.output_root,
+                progress_cb=lambda cur, total, msg: self.progress.emit(cur, total, msg),
+                cancel_check=lambda: self._cancelled,
+            )
+            self.finished_ok.emit(result)
+        except CancelledError as exc:
+            self.failed.emit(str(exc))
+        except DossierGenerationError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:  # noqa: BLE001 - no debe tumbar la aplicacion
+            logger.exception("Error inesperado generando el dossier")
+            self.failed.emit(f"Error inesperado: {exc}")
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Dossier Builder QA/QC")
+        self.resize(1280, 820)
+
+        self.database = DatabaseService()
+        self.project_service = ProjectService(database=self.database)
+        self.settings_service = SettingsService()
+
+        self.project = None
+        self.current_section_id: Optional[str] = None
+        self._generation_worker: Optional[GenerationWorker] = None
+        self._progress_dialog: Optional[QProgressDialog] = None
+
+        self._build_toolbar()
+        self._build_central_widget()
+        self.setStatusBar(QStatusBar())
+
+        self._refresh_ui()
+
+    # ------------------------------------------------------------------
+    # Construccion de la interfaz
+    # ------------------------------------------------------------------
+    def _build_toolbar(self) -> None:
+        toolbar = QToolBar("Principal")
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+
+        def add_action(text: str, handler) -> QAction:
+            action = QAction(text, self)
+            action.triggered.connect(handler)
+            toolbar.addAction(action)
+            return action
+
+        add_action("Nuevo proyecto", self.new_project)
+        add_action("Abrir proyecto", self.open_project)
+        add_action("Guardar", self.save_project)
+        add_action("Guardar como...", self.save_project_as)
+        toolbar.addSeparator()
+        add_action("Metadatos", self.edit_metadata)
+        add_action("Configuracion", self.edit_settings)
+        toolbar.addSeparator()
+        add_action("Validar dossier", self.validate_dossier)
+        self.generate_action = add_action("Generar dossier", self.generate_dossier)
+
+    def _build_central_widget(self) -> None:
+        splitter = QSplitter(Qt.Horizontal)
+
+        # -- Panel izquierdo: arbol de secciones ---------------------------
+        self.tree = SectionTreeWidget()
+        self.tree.section_selected.connect(self._on_section_selected)
+        splitter.addWidget(self.tree)
+
+        # -- Panel central: documentos de la seccion seleccionada -----------
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+
+        self.section_label = QLabel("Seleccione una seccion")
+        self.section_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        center_layout.addWidget(self.section_label)
+
+        self.doc_list = DocumentListWidget()
+        self.doc_list.order_changed.connect(self._on_documents_reordered)
+        self.doc_list.itemDoubleClicked.connect(lambda _item: self.preview_selected_document())
+        center_layout.addWidget(self.doc_list, stretch=1)
+
+        buttons_row1 = QHBoxLayout()
+        self.btn_add_docs = QPushButton("+ Agregar documento(s)")
+        self.btn_add_docs.clicked.connect(self.add_documents)
+        self.btn_add_subsection = QPushButton("+ Agregar subseccion")
+        self.btn_add_subsection.clicked.connect(self.add_subsection)
+        buttons_row1.addWidget(self.btn_add_docs)
+        buttons_row1.addWidget(self.btn_add_subsection)
+        center_layout.addLayout(buttons_row1)
+
+        buttons_row2 = QHBoxLayout()
+        self.btn_move_up = QPushButton("Subir")
+        self.btn_move_up.clicked.connect(lambda: self._move_selected(-1))
+        self.btn_move_down = QPushButton("Bajar")
+        self.btn_move_down.clicked.connect(lambda: self._move_selected(1))
+        self.btn_remove = QPushButton("Eliminar")
+        self.btn_remove.clicked.connect(self.remove_selected_documents)
+        self.btn_preview = QPushButton("Vista previa")
+        self.btn_preview.clicked.connect(self.preview_selected_document)
+        self.btn_treatment = QPushButton("Tratamiento de firma...")
+        self.btn_treatment.clicked.connect(self._show_treatment_menu)
+        buttons_row2.addWidget(self.btn_move_up)
+        buttons_row2.addWidget(self.btn_move_down)
+        buttons_row2.addWidget(self.btn_remove)
+        buttons_row2.addWidget(self.btn_preview)
+        buttons_row2.addWidget(self.btn_treatment)
+        center_layout.addLayout(buttons_row2)
+
+        buttons_row3 = QHBoxLayout()
+        self.btn_open_external = QPushButton("Abrir documento")
+        self.btn_open_external.clicked.connect(self.open_selected_document_external)
+        self.btn_open_folder = QPushButton("Abrir ubicacion")
+        self.btn_open_folder.clicked.connect(self.open_selected_document_folder)
+        buttons_row3.addWidget(self.btn_open_external)
+        buttons_row3.addWidget(self.btn_open_folder)
+        center_layout.addLayout(buttons_row3)
+
+        splitter.addWidget(center)
+        splitter.setSizes([380, 900])
+
+        self.setCentralWidget(splitter)
+
+    # ------------------------------------------------------------------
+    # Gestion de proyectos
+    # ------------------------------------------------------------------
+    def new_project(self) -> None:
+        name, ok = QInputDialog.getText(self, "Nuevo proyecto", "Nombre del proyecto:")
+        if not ok or not name.strip():
+            return
+
+        template_path, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar plantilla del dossier", "", "Archivos PDF (*.pdf)"
+        )
+        if not template_path:
+            return
+
+        project = self.project_service.new_project(name.strip())
+        try:
+            self._load_template_into_project(project, template_path)
+        except (pdf_engine.PDFOpenError, pdf_engine.PDFPasswordProtectedError) as exc:
+            QMessageBox.critical(self, "Error al leer la plantilla", str(exc))
+            return
+
+        self.project = project
+        self.current_section_id = None
+        self._refresh_ui()
+
+    def _load_template_into_project(self, project, template_path: str) -> None:
+        toc = pdf_engine.extract_toc(template_path)
+        project.template_path = template_path
+        project.template_page_count = pdf_engine.get_page_count(template_path)
+
+        if toc:
+            project.sections = build_section_tree_from_toc(toc)
+        else:
+            # Sin bookmarks: se crea una unica seccion cubriendo todo el documento
+            # para que el usuario pueda reorganizar manualmente.
+            project.sections = [
+                SectionNode(title="Documentos", numbering="1", level=1, template_page_index=0)
+            ]
+        logger.info("Plantilla cargada: %s (%d secciones detectadas)", template_path, len(project.sections))
+
+    def open_project(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Abrir proyecto", "", "Proyecto Dossier Builder (*.dossierproj)"
+        )
+        if not path:
+            return
+        try:
+            self.project = self.project_service.open(path)
+        except ProjectError as exc:
+            QMessageBox.critical(self, "Error al abrir proyecto", str(exc))
+            return
+        self.settings_service.add_recent_project(path)
+        self.current_section_id = None
+        self._refresh_ui()
+
+    def save_project(self) -> None:
+        if not self._require_project():
+            return
+        if self.project.project_file_path:
+            self._save_to(self.project.project_file_path)
+        else:
+            self.save_project_as()
+
+    def save_project_as(self) -> None:
+        if not self._require_project():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar proyecto como", f"{self.project.name}.dossierproj", "Proyecto (*.dossierproj)"
+        )
+        if not path:
+            return
+        self._save_to(path)
+
+    def _save_to(self, path: str) -> None:
+        try:
+            saved_path = self.project_service.save(self.project, path)
+        except ProjectError as exc:
+            QMessageBox.critical(self, "Error al guardar", str(exc))
+            return
+        self.settings_service.add_recent_project(str(saved_path))
+        self.statusBar().showMessage(f"Proyecto guardado en {saved_path}", 5000)
+        self._refresh_ui()
+
+    def edit_metadata(self) -> None:
+        if not self._require_project():
+            return
+        dialog = MetadataDialog(self.project.metadata, self)
+        if dialog.exec():
+            self.project.metadata = dialog.result_metadata()
+            self.project.touch()
+
+    def edit_settings(self) -> None:
+        if not self._require_project():
+            return
+        dialog = SettingsDialog(self.project.settings, self)
+        if dialog.exec():
+            self.project.settings = dialog.apply_to(self.project.settings)
+            self.project.touch()
+
+    # ------------------------------------------------------------------
+    # Secciones
+    # ------------------------------------------------------------------
+    def _on_section_selected(self, section_id: str) -> None:
+        self.current_section_id = section_id
+        self._refresh_document_list()
+
+    def add_subsection(self) -> None:
+        if not self._require_project():
+            return
+        parent = self._current_section()
+        if parent is None:
+            QMessageBox.information(self, "Subseccion", "Seleccione primero una seccion padre.")
+            return
+
+        dialog = NewSectionDialog(self)
+        if not dialog.exec():
+            return
+        name = dialog.section_name()
+        if not name:
+            return
+
+        child = SectionNode(
+            title=name,
+            level=parent.level + 1,
+            order=len(parent.children),
+            template_page_index=None,
+            is_dynamic=True,
+            parent_id=parent.id,
+        )
+        parent.children.append(child)
+        renumber_sections(self.project.sections)
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(child.id)
+
+    def _current_section(self) -> Optional[SectionNode]:
+        if not self.project or not self.current_section_id:
+            return None
+        return self.project.find_section(self.current_section_id)
+
+    # ------------------------------------------------------------------
+    # Documentos
+    # ------------------------------------------------------------------
+    def add_documents(self) -> None:
+        section = self._current_section()
+        if section is None:
+            QMessageBox.information(self, "Agregar documento", "Seleccione primero una seccion.")
+            return
+
+        paths, _ = QFileDialog.getOpenFileNames(self, "Agregar documentos PDF", "", "Archivos PDF (*.pdf)")
+        if not paths:
+            return
+
+        for path in paths:
+            doc = DocumentItem(source_path=path, order=len(section.documents))
+            self._inspect_document(doc)
+            section.documents.append(doc)
+
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(section.id)
+
+    def _inspect_document(self, doc: DocumentItem) -> None:
+        """Completa metadatos basicos y deteccion de firma al agregar un documento."""
+        path = Path(doc.source_path)
+        try:
+            doc.file_size_bytes = path.stat().st_size
+        except OSError as exc:
+            doc.status = DocumentStatus.MISSING
+            doc.error_message = str(exc)
+            return
+
+        try:
+            doc.page_count = pdf_engine.get_page_count(str(path))
+        except pdf_engine.PDFPasswordProtectedError:
+            doc.status = DocumentStatus.PASSWORD_PROTECTED
+            doc.error_message = "El PDF esta protegido con contrasena."
+            return
+        except pdf_engine.PDFOpenError as exc:
+            doc.status = DocumentStatus.CORRUPT
+            doc.error_message = str(exc)
+            return
+
+        try:
+            signature_info = detect_signatures(str(path))
+            doc.has_signature = signature_info.has_signature
+            doc.signature_details = signature_info.details
+        except Exception as exc:  # noqa: BLE001 - la deteccion nunca debe bloquear el agregado
+            logger.warning("No se pudo analizar firmas de '%s': %s", path, exc)
+            doc.has_signature = None
+
+        doc.status = DocumentStatus.OK
+
+    def _refresh_document_list(self) -> None:
+        section = self._current_section()
+        if section is None:
+            self.section_label.setText("Seleccione una seccion")
+            self.doc_list.clear()
+            return
+        label = f"{section.numbering} {section.title}".strip()
+        self.section_label.setText(f"{label}  ({len(section.documents)} documento(s))")
+        self.doc_list.load_documents(section.documents)
+
+    def _on_documents_reordered(self) -> None:
+        section = self._current_section()
+        if section is None:
+            return
+        by_id = {doc.id: doc for doc in section.documents}
+        new_order = [by_id[doc_id] for doc_id in self.doc_list.ordered_document_ids() if doc_id in by_id]
+        for index, doc in enumerate(new_order):
+            doc.order = index
+        section.documents = new_order
+        self.project.touch()
+
+    def _move_selected(self, direction: int) -> None:
+        section = self._current_section()
+        if section is None:
+            return
+        selected_ids = self.doc_list.selected_document_ids()
+        if len(selected_ids) != 1:
+            return
+        doc_id = selected_ids[0]
+        index = next((i for i, d in enumerate(section.documents) if d.id == doc_id), None)
+        if index is None:
+            return
+        new_index = index + direction
+        if not (0 <= new_index < len(section.documents)):
+            return
+        section.documents[index], section.documents[new_index] = (
+            section.documents[new_index],
+            section.documents[index],
+        )
+        for i, doc in enumerate(section.documents):
+            doc.order = i
+        self.project.touch()
+        self._refresh_document_list()
+
+    def remove_selected_documents(self) -> None:
+        section = self._current_section()
+        if section is None:
+            return
+        selected_ids = set(self.doc_list.selected_document_ids())
+        if not selected_ids:
+            return
+        confirm = QMessageBox.question(
+            self, "Eliminar documentos", f"Eliminar {len(selected_ids)} documento(s) de la seccion?"
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        section.documents = [d for d in section.documents if d.id not in selected_ids]
+        for i, doc in enumerate(section.documents):
+            doc.order = i
+        self.project.touch()
+        self._refresh_ui()
+
+    def _selected_document(self) -> Optional[DocumentItem]:
+        section = self._current_section()
+        if section is None:
+            return None
+        ids = self.doc_list.selected_document_ids()
+        if len(ids) != 1:
+            return None
+        return next((d for d in section.documents if d.id == ids[0]), None)
+
+    def preview_selected_document(self) -> None:
+        doc = self._selected_document()
+        if doc is None:
+            return
+        path = doc.flattened_path or doc.source_path
+        if not Path(path).exists():
+            QMessageBox.warning(self, "Vista previa", f"El archivo no existe: {path}")
+            return
+        PdfPreviewDialog(path, self).exec()
+
+    def open_selected_document_external(self) -> None:
+        doc = self._selected_document()
+        if doc is None:
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(doc.source_path))
+
+    def open_selected_document_folder(self) -> None:
+        doc = self._selected_document()
+        if doc is None:
+            return
+        folder = str(Path(doc.source_path).parent)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _show_treatment_menu(self) -> None:
+        section = self._current_section()
+        if section is None:
+            return
+        selected_ids = set(self.doc_list.selected_document_ids())
+        if not selected_ids:
+            QMessageBox.information(self, "Tratamiento de firma", "Seleccione uno o mas documentos.")
+            return
+
+        menu = QMenu(self)
+        act_keep = menu.addAction("Conservar original")
+        act_flatten = menu.addAction("Aplanar para dossier")
+        act_auto = menu.addAction("Automatico (segun deteccion de firma)")
+        chosen = menu.exec(self.btn_treatment.mapToGlobal(self.btn_treatment.rect().bottomLeft()))
+        if chosen is None:
+            return
+        value = {
+            act_keep: SignatureTreatment.KEEP_ORIGINAL,
+            act_flatten: SignatureTreatment.FLATTEN,
+            act_auto: SignatureTreatment.AUTO,
+        }[chosen]
+
+        if value == SignatureTreatment.FLATTEN:
+            QMessageBox.information(
+                self,
+                "Aplanado de firma",
+                "Este documento contiene (o podria contener) una firma digital. Para incluirlo en el "
+                "dossier se generara una representacion plana (imagen de alta resolucion). El archivo "
+                "original firmado permanecera sin modificaciones.",
+            )
+
+        for doc in section.documents:
+            if doc.id in selected_ids:
+                doc.signature_treatment = value
+        self.project.touch()
+        self._refresh_document_list()
+
+    # ------------------------------------------------------------------
+    # Validacion y generacion
+    # ------------------------------------------------------------------
+    def validate_dossier(self) -> None:
+        if not self._require_project():
+            return
+        report = validate_project(self.project)
+        ValidationResultsDialog(report, self).exec()
+
+    def generate_dossier(self) -> None:
+        if not self._require_project():
+            return
+
+        report = validate_project(self.project)
+        if not report.can_generate:
+            ValidationResultsDialog(report, self).exec()
+            return
+        if report.warnings:
+            proceed = QMessageBox.question(
+                self,
+                "Advertencias encontradas",
+                f"Se encontraron {len(report.warnings)} advertencia(s). Desea continuar de todas formas?",
+            )
+            if proceed != QMessageBox.Yes:
+                return
+
+        output_root = QFileDialog.getExistingDirectory(
+            self, "Carpeta de salida del dossier", self.project.settings.output_dir or ""
+        )
+        if not output_root:
+            return
+        self.project.settings.output_dir = output_root
+
+        self._progress_dialog = QProgressDialog("Preparando generacion...", "Cancelar", 0, 100, self)
+        self._progress_dialog.setWindowTitle("Generando dossier")
+        self._progress_dialog.setWindowModality(Qt.WindowModal)
+        self._progress_dialog.setMinimumDuration(0)
+        self._progress_dialog.canceled.connect(self._cancel_generation)
+
+        self._generation_worker = GenerationWorker(self.project, output_root)
+        self._generation_worker.progress.connect(self._on_generation_progress)
+        self._generation_worker.finished_ok.connect(self._on_generation_finished)
+        self._generation_worker.failed.connect(self._on_generation_failed)
+        self._generation_worker.start()
+
+        self.generate_action.setEnabled(False)
+
+    def _cancel_generation(self) -> None:
+        if self._generation_worker:
+            self._generation_worker.cancel()
+
+    def _on_generation_progress(self, current: int, total: int, message: str) -> None:
+        if not self._progress_dialog:
+            return
+        self._progress_dialog.setMaximum(max(total, 1))
+        self._progress_dialog.setValue(min(current, total))
+        self._progress_dialog.setLabelText(f"{message}  ({current}/{total})")
+
+    def _on_generation_finished(self, result: GenerationResult) -> None:
+        if self._progress_dialog:
+            self._progress_dialog.close()
+        self.generate_action.setEnabled(True)
+
+        self.database.record_generation(
+            project_id=self.project.id,
+            output_path=result.output_pdf_path,
+            generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            total_pages=result.total_pages,
+            total_documents=result.total_documents,
+            flattened_count=result.flattened_count,
+            sha256_final=result.sha256_final,
+            had_errors=False,
+        )
+
+        answer = QMessageBox.information(
+            self,
+            "Dossier generado",
+            f"Dossier generado correctamente:\n{result.output_pdf_path}\n\n"
+            f"Paginas: {result.total_pages}\n"
+            f"Documentos: {result.total_documents}\n"
+            f"Documentos aplanados (firma): {result.flattened_count}\n"
+            f"SHA-256: {result.sha256_final}\n\n"
+            "Desea abrir la carpeta de salida?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(result.output_pdf_path).parent)))
+
+    def _on_generation_failed(self, message: str) -> None:
+        if self._progress_dialog:
+            self._progress_dialog.close()
+        self.generate_action.setEnabled(True)
+        QMessageBox.critical(self, "Error al generar el dossier", message)
+
+    # ------------------------------------------------------------------
+    # Utilidades generales
+    # ------------------------------------------------------------------
+    def _require_project(self) -> bool:
+        if self.project is None:
+            QMessageBox.information(self, "Sin proyecto", "Cree o abra un proyecto primero.")
+            return False
+        return True
+
+    def _refresh_ui(self) -> None:
+        has_project = self.project is not None
+        for widget in (
+            self.btn_add_docs,
+            self.btn_add_subsection,
+            self.btn_move_up,
+            self.btn_move_down,
+            self.btn_remove,
+            self.btn_preview,
+            self.btn_treatment,
+            self.btn_open_external,
+            self.btn_open_folder,
+        ):
+            widget.setEnabled(has_project)
+
+        if not has_project:
+            self.setWindowTitle("Dossier Builder QA/QC")
+            self.tree.clear()
+            self.doc_list.clear()
+            self.section_label.setText("Cree o abra un proyecto para comenzar")
+            self.statusBar().clearMessage()
+            return
+
+        self.setWindowTitle(f"Dossier Builder QA/QC - {self.project.name}")
+        self.tree.load_sections(self.project.sections)
+        self._refresh_document_list()
+
+        total_docs = self.project.total_documents()
+        signed_docs = sum(
+            1 for s in self.project.iter_all_sections() for d in s.documents if d.has_signature
+        )
+        self.statusBar().showMessage(
+            f"{total_docs} documento(s) | {signed_docs} con firma detectada | "
+            f"plantilla: {Path(self.project.template_path).name if self.project.template_path else '-'}"
+        )
