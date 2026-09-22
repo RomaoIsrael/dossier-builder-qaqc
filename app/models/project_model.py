@@ -66,6 +66,7 @@ class ProjectSettings:
     create_bookmarks_for_individual_docs: bool = False
     keep_backup_of_signed_originals: bool = True
     generate_automatic_index: bool = False
+    include_documents_in_index: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)

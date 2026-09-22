@@ -325,11 +325,20 @@ class DossierBuilder:
         final_page_count = pdf_engine.get_page_count(str(output_path))
 
         manifest_path = dirs["reports"] / "manifest.json"
-        self._write_manifest(manifest_path, output_path, sha_final, final_page_count, flattened_count, validation)
+        self._write_manifest(
+            manifest_path, output_path, sha_final, final_page_count, flattened_count, validation, document_page_position
+        )
 
         report_path = dirs["reports"] / "Reporte_Generacion.pdf"
         self._write_report_pdf(
-            report_path, output_path, sha_final, final_page_count, len(all_docs), flattened_count, validation
+            report_path,
+            output_path,
+            sha_final,
+            final_page_count,
+            len(all_docs),
+            flattened_count,
+            validation,
+            document_page_position,
         )
         tick("Reporte generado")
 
@@ -364,14 +373,27 @@ class DossierBuilder:
         inserta al comienzo de ``out_doc``, desplazando las posiciones ya
         calculadas de secciones y documentos. Devuelve la cantidad de
         paginas de indice insertadas.
+
+        Si ``settings.include_documents_in_index`` esta activo, cada
+        documento original tambien aparece en el indice, anidado bajo su
+        seccion, con su nombre y la pagina donde empieza dentro del dossier
+        final (ej. "pag. 185  NOMBRE_ARCHIVO.pdf") — util para ubicar
+        rapidamente un documento original dentro del PDF completo.
         """
-        entries: list[tuple[int, str, str]] = []  # (nivel, titulo, section_id)
+        include_docs = self.project.settings.include_documents_in_index
+        # (nivel, titulo, kind, ref_id): kind="section" -> ref_id busca en
+        # section_page_position; kind="doc" -> ref_id busca en document_page_position.
+        entries: list[tuple[int, str, str, str]] = []
 
         def walk(nodes: list[SectionNode]) -> None:
             for node in sorted(nodes, key=lambda n: n.order):
                 if node.create_bookmark and node.id in section_page_position:
                     title = f"{node.numbering} {node.title}".strip() if node.numbering else node.title
-                    entries.append((node.level, title, node.id))
+                    entries.append((node.level, title, "section", node.id))
+                    if include_docs:
+                        for doc in node.documents:
+                            if doc.id in document_page_position:
+                                entries.append((node.level + 1, doc.name, "doc", doc.id))
                 walk(node.children)
 
         walk(self.project.sections)
@@ -380,9 +402,12 @@ class DossierBuilder:
             return 0
 
         index_page_count = _estimate_index_page_count(len(entries))
+        position_by_kind = {"section": section_page_position, "doc": document_page_position}
 
         def render_with_offset(offset: int) -> fitz.Document:
-            rendered = [(level, title, section_page_position[sid] + 1 + offset) for level, title, sid in entries]
+            rendered = [
+                (level, title, position_by_kind[kind][ref_id] + 1 + offset) for level, title, kind, ref_id in entries
+            ]
             return _render_index_document(rendered)
 
         index_doc = render_with_offset(index_page_count)
@@ -577,13 +602,16 @@ class DossierBuilder:
         final_page_count: int,
         flattened_count: int,
         validation: ValidationReport,
+        document_page_position: dict[str, int],
     ) -> None:
         documents = []
         for section, doc in self._iter_all_documents():
+            start_page = document_page_position.get(doc.id)
             documents.append(
                 {
                     "section": f"{section.numbering} {section.title}".strip(),
                     "name": doc.name,
+                    "start_page": (start_page + 1) if start_page is not None else None,
                     "source_path": doc.source_path,
                     "sha256_original": doc.sha256_original,
                     "flattened": doc.will_be_flattened,
@@ -620,6 +648,7 @@ class DossierBuilder:
         total_documents: int,
         flattened_count: int,
         validation: ValidationReport,
+        document_page_position: dict[str, int],
     ) -> None:
         doc = fitz.open()
         page = doc.new_page(width=595, height=842)  # A4
@@ -646,6 +675,22 @@ class DossierBuilder:
             text_lines.append(
                 f"  {section.numbering} {section.title} - {len(section.documents)} documento(s)"
             )
+
+        # Documentos originales con su pagina de inicio dentro del dossier
+        # final (util para ubicar rapidamente un documento en el PDF
+        # completo), ordenados por orden de aparicion en el dossier.
+        doc_rows = []
+        for section, item in self._iter_all_documents():
+            start_page = document_page_position.get(item.id)
+            if start_page is not None:
+                doc_rows.append((start_page, item.name))
+        doc_rows.sort(key=lambda row: row[0])
+
+        if doc_rows:
+            text_lines.append("")
+            text_lines.append("Documentos originales (pagina de inicio en el dossier final):")
+            for start_page, name in doc_rows:
+                text_lines.append(f"  pag. {start_page + 1}  {name}")
 
         if validation.warnings:
             text_lines.append("")

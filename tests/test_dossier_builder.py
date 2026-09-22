@@ -249,3 +249,64 @@ def test_generate_without_automatic_index_has_no_indice_bookmark(populated_proje
     finally:
         out_doc.close()
     assert "INDICE" not in toc_titles
+
+
+def test_generate_with_documents_in_index_lists_names_and_pages(populated_project, tmp_path):
+    project, dyn = populated_project
+    project.settings.generate_automatic_index = True
+    project.settings.include_documents_in_index = True
+    builder = DossierBuilder(project)
+
+    result = builder.generate(str(tmp_path))
+    # 11 entradas (6 secciones + 5 documentos) siguen cabiendo en 1 sola
+    # pagina de indice, igual que con solo las 6 secciones.
+    assert result.total_pages == 18
+
+    out_doc = fitz.open(result.output_pdf_path)
+    try:
+        index_page_text = out_doc[0].get_text()
+    finally:
+        out_doc.close()
+
+    sec_1_1 = _find(project.sections, "1.1")
+    doc_1_1a_name = sec_1_1.documents[0].name
+    doc_1_1b_name = sec_1_1.documents[1].name
+    dyn_doc_name = dyn.documents[0].name
+
+    assert doc_1_1b_name in index_page_text
+    assert dyn_doc_name in index_page_text
+
+    # doc 1.1a: posicion sin desplazar 4 (0-based) -> 4+1(1-based)+1(offset indice) = 6.
+    # Se busca en la misma linea que el nombre, para no depender de que "6"
+    # no aparezca en otro numero de pagina en cualquier parte de la hoja.
+    lines_with_1_1a = [line for line in index_page_text.splitlines() if doc_1_1a_name in line]
+    assert lines_with_1_1a, f"no se encontro '{doc_1_1a_name}' en el indice"
+    assert "6" in lines_with_1_1a[0]
+
+
+def test_manifest_and_report_include_document_start_pages(populated_project, tmp_path):
+    project, dyn = populated_project
+    builder = DossierBuilder(project)
+    result = builder.generate(str(tmp_path))
+
+    root = tmp_path / "Proyecto integracion"
+    manifest = json.loads((root / "03_REPORTES" / "manifest.json").read_text(encoding="utf-8"))
+
+    sec_1_2 = _find(project.sections, "1.2")
+    doc_1_2a = sec_1_2.documents[0]
+    manifest_entry = next(d for d in manifest["documents"] if d["name"] == doc_1_2a.name)
+    # Sin indice automatico: doc 1.2a empieza en la pagina 10 (1-based),
+    # ver test_generate_bookmarks_point_to_correct_pages (posicion 9 0-based).
+    assert manifest_entry["start_page"] == 10
+
+    report_doc = fitz.open(str(root / "03_REPORTES" / "Reporte_Generacion.pdf"))
+    try:
+        report_text = "".join(page.get_text() for page in report_doc)
+    finally:
+        report_doc.close()
+    # No se asume espaciado exacto (la extraccion de texto de PyMuPDF puede
+    # normalizar espacios multiples): solo que la pagina y el nombre esten
+    # presentes, en la misma linea del reporte.
+    matching_lines = [line for line in report_text.splitlines() if doc_1_2a.name in line]
+    assert matching_lines, f"no se encontro '{doc_1_2a.name}' en el reporte"
+    assert "pag. 10" in matching_lines[0]

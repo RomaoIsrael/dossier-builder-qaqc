@@ -338,6 +338,22 @@ página exacta tras las inserciones.
   abrir ubicación, tratamiento de firma, subir/bajar, eliminar) y en el
   árbol de secciones (agregar subsección, **renombrar sección** — nuevo,
   eliminar sección).
+- **Fix**: error `source object number out of range` de PyMuPDF al generar
+  el dossier (reutilizar el mismo documento de origen de la plantilla para
+  copiar sus páginas una por una, intercalado con la inserción de otros
+  documentos, podía corromper el "graft map" interno de la librería). Cada
+  página de la plantilla ahora se extrae de antemano a su propio documento
+  de un solo uso.
+- **Trazabilidad de página de inicio por documento**: cada documento
+  original queda registrado con la página donde empieza en el dossier
+  final:
+  - En `manifest.json`, campo `start_page` por documento.
+  - En `Reporte_Generacion.pdf`, una sección "Documentos originales (página
+    de inicio en el dossier final)" con líneas `pág. 185  NOMBRE_ARCHIVO.pdf`.
+  - Opcionalmente **dentro del dossier mismo**: con "Incluir documentos
+    individuales en el índice" (en Configuración, junto a "Generar índice
+    automático"), el índice automático lista cada documento anidado bajo su
+    sección, con su página de inicio.
 
 ## Roadmap / Fase 4
 

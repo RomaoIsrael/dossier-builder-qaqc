@@ -120,6 +120,12 @@ class SettingsDialog(QDialog):
         self.auto_index_checkbox.setChecked(settings.generate_automatic_index)
         form.addRow("", self.auto_index_checkbox)
 
+        self.include_docs_checkbox = QCheckBox(
+            "Incluir documentos individuales en el indice (nombre + pagina de inicio)"
+        )
+        self.include_docs_checkbox.setChecked(settings.include_documents_in_index)
+        form.addRow("", self.include_docs_checkbox)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -130,7 +136,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(
             QLabel(
                 "El indice automatico se inserta al comienzo del dossier final, ademas del indice "
-                "existente en la plantilla (que se respeta sin cambios)."
+                "existente en la plantilla (que se respeta sin cambios). Con 'Incluir documentos "
+                "individuales', cada documento aparece anidado bajo su seccion, ej.:\n"
+                "   1.1 DIAGRAMAS MECANICOS ........... 5\n"
+                "       Diagrama_Final_Firmado.pdf ..... 7"
             )
         )
         layout.addWidget(buttons)
@@ -142,6 +151,7 @@ class SettingsDialog(QDialog):
         settings.output_naming_pattern = self.naming_edit.text() or settings.output_naming_pattern
         settings.output_dir = self.output_dir_edit.text()
         settings.generate_automatic_index = self.auto_index_checkbox.isChecked()
+        settings.include_documents_in_index = self.include_docs_checkbox.isChecked()
         return settings
 
 
