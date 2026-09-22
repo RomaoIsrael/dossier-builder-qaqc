@@ -151,6 +151,8 @@ class MainWindow(QMainWindow):
         # -- Panel izquierdo: arbol de secciones ---------------------------
         self.tree = SectionTreeWidget()
         self.tree.section_selected.connect(self._on_section_selected)
+        self.tree.files_dropped_on_section.connect(self._on_files_dropped_on_section)
+        self.tree.customContextMenuRequested.connect(self._show_section_context_menu)
         splitter.addWidget(self.tree)
 
         # -- Panel central: documentos de la seccion seleccionada -----------
@@ -164,6 +166,8 @@ class MainWindow(QMainWindow):
         self.doc_list = DocumentListWidget()
         self.doc_list.order_changed.connect(self._on_documents_reordered)
         self.doc_list.itemDoubleClicked.connect(lambda _item: self.preview_selected_document())
+        self.doc_list.files_dropped.connect(self._on_files_dropped_on_document_list)
+        self.doc_list.customContextMenuRequested.connect(self._show_document_context_menu)
         center_layout.addWidget(self.doc_list, stretch=1)
 
         buttons_row1 = QHBoxLayout()
@@ -425,6 +429,18 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Documentos
     # ------------------------------------------------------------------
+    def _add_paths_to_section(self, paths: list[str], section: SectionNode) -> int:
+        """Crea un DocumentItem por cada ruta, lo inspecciona (paginas,
+        firma) y lo agrega al final de ``section``. Devuelve cuantos se
+        agregaron. No toca el proyecto ni refresca la UI: eso queda a
+        cargo del llamador, para poder agrupar varias inserciones.
+        """
+        for path in paths:
+            doc = DocumentItem(source_path=path, order=len(section.documents))
+            self._inspect_document(doc)
+            section.documents.append(doc)
+        return len(paths)
+
     def add_documents(self) -> None:
         section = self._current_section()
         if section is None:
@@ -435,11 +451,7 @@ class MainWindow(QMainWindow):
         if not paths:
             return
 
-        for path in paths:
-            doc = DocumentItem(source_path=path, order=len(section.documents))
-            self._inspect_document(doc)
-            section.documents.append(doc)
-
+        self._add_paths_to_section(paths, section)
         self.project.touch()
         self._refresh_ui()
         self.tree.select_section(section.id)
@@ -461,15 +473,42 @@ class MainWindow(QMainWindow):
             )
             return
 
-        for path in pdf_paths:
-            doc = DocumentItem(source_path=path, order=len(section.documents))
-            self._inspect_document(doc)
-            section.documents.append(doc)
-
+        self._add_paths_to_section(pdf_paths, section)
         self.project.touch()
         self._refresh_ui()
         self.tree.select_section(section.id)
         self.statusBar().showMessage(f"{len(pdf_paths)} documento(s) agregado(s) desde la carpeta.", 5000)
+
+    def _on_files_dropped_on_document_list(self, paths: list[str]) -> None:
+        """Archivos PDF arrastrados desde fuera de la app (p. ej. el
+        Explorador de Windows) y soltados sobre la lista de documentos."""
+        if not self._require_project():
+            return
+        section = self._current_section()
+        if section is None:
+            QMessageBox.information(
+                self, "Agregar documentos", "Seleccione primero una seccion antes de arrastrar archivos."
+            )
+            return
+        count = self._add_paths_to_section(paths, section)
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(section.id)
+        self.statusBar().showMessage(f"{count} documento(s) agregado(s) por arrastrar y soltar.", 5000)
+
+    def _on_files_dropped_on_section(self, section_id: str, paths: list[str]) -> None:
+        """Archivos PDF arrastrados y soltados directamente sobre una
+        seccion del arbol (sin necesidad de seleccionarla primero)."""
+        if not self._require_project():
+            return
+        section = self.project.find_section(section_id)
+        if section is None:
+            return
+        count = self._add_paths_to_section(paths, section)
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(section.id)
+        self.statusBar().showMessage(f"{count} documento(s) agregado(s) por arrastrar y soltar.", 5000)
 
     def auto_distribute_documents(self) -> None:
         if not self._require_project():
@@ -667,11 +706,7 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _show_treatment_menu(self) -> None:
-        section = self._current_section()
-        if section is None:
-            return
-        selected_ids = set(self.doc_list.selected_document_ids())
-        if not selected_ids:
+        if not self.doc_list.selected_document_ids():
             QMessageBox.information(self, "Tratamiento de firma", "Seleccione uno o mas documentos.")
             return
 
@@ -687,6 +722,15 @@ class MainWindow(QMainWindow):
             act_flatten: SignatureTreatment.FLATTEN,
             act_auto: SignatureTreatment.AUTO,
         }[chosen]
+        self._apply_treatment_to_selected(value)
+
+    def _apply_treatment_to_selected(self, value: SignatureTreatment) -> None:
+        section = self._current_section()
+        if section is None:
+            return
+        selected_ids = set(self.doc_list.selected_document_ids())
+        if not selected_ids:
+            return
 
         if value == SignatureTreatment.FLATTEN:
             QMessageBox.information(
@@ -702,6 +746,71 @@ class MainWindow(QMainWindow):
                 doc.signature_treatment = value
         self.project.touch()
         self._refresh_document_list()
+
+    def _show_document_context_menu(self, pos) -> None:
+        if self._current_section() is None:
+            return
+        item = self.doc_list.itemAt(pos)
+        if item is not None and item not in self.doc_list.selectedItems():
+            self.doc_list.setCurrentItem(item)
+        if not self.doc_list.selectedItems():
+            return
+
+        menu = QMenu(self)
+        menu.addAction("Vista previa", self.preview_selected_document)
+        menu.addAction("Abrir documento", self.open_selected_document_external)
+        menu.addAction("Abrir ubicacion", self.open_selected_document_folder)
+        menu.addSeparator()
+
+        treatment_menu = menu.addMenu("Tratamiento de firma")
+        treatment_menu.addAction(
+            "Conservar original", lambda: self._apply_treatment_to_selected(SignatureTreatment.KEEP_ORIGINAL)
+        )
+        treatment_menu.addAction(
+            "Aplanar para dossier", lambda: self._apply_treatment_to_selected(SignatureTreatment.FLATTEN)
+        )
+        treatment_menu.addAction(
+            "Automatico (segun deteccion de firma)", lambda: self._apply_treatment_to_selected(SignatureTreatment.AUTO)
+        )
+        menu.addSeparator()
+
+        menu.addAction("Subir", lambda: self._move_selected(-1))
+        menu.addAction("Bajar", lambda: self._move_selected(1))
+        menu.addSeparator()
+        menu.addAction("Eliminar", self.remove_selected_documents)
+
+        menu.exec(self.doc_list.viewport().mapToGlobal(pos))
+
+    def _show_section_context_menu(self, pos) -> None:
+        if not self._require_project():
+            return
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        self.tree.setCurrentItem(item)
+        section = self._current_section()
+        if section is None:
+            return
+
+        menu = QMenu(self)
+        menu.addAction("Agregar subseccion", self.add_subsection)
+        menu.addAction("Renombrar seccion", self._rename_current_section)
+        menu.addSeparator()
+        menu.addAction("Eliminar seccion", self.remove_section)
+
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _rename_current_section(self) -> None:
+        section = self._current_section()
+        if section is None:
+            return
+        new_title, ok = QInputDialog.getText(self, "Renombrar seccion", "Nuevo nombre:", text=section.title)
+        if not ok or not new_title.strip():
+            return
+        section.title = new_title.strip()
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(section.id)
 
     # ------------------------------------------------------------------
     # Validacion y generacion

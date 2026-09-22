@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem
 
 from app.models.document_model import DocumentItem, DocumentStatus
@@ -34,18 +34,60 @@ def document_display_text(doc: DocumentItem, index: int) -> str:
     return f"{index + 1}. {doc.name}{suffix}"
 
 
+def _pdf_paths_from_mime(mime_data) -> list[str]:
+    """Extrae las rutas locales de archivos .pdf de un evento de drag&drop
+    originado fuera de la aplicacion (por ejemplo, el Explorador de Windows).
+    """
+    if not mime_data.hasUrls():
+        return []
+    paths = []
+    for url in mime_data.urls():
+        if not url.isLocalFile():
+            continue
+        path = url.toLocalFile()
+        if path.lower().endswith(".pdf"):
+            paths.append(path)
+    return paths
+
+
 class DocumentListWidget(QListWidget):
-    """Lista de documentos de una seccion, reordenable por arrastre."""
+    """Lista de documentos de una seccion, reordenable por arrastre.
+
+    Ademas de reordenar internamente (arrastrar un item a otra posicion de
+    la misma lista), acepta que se arrastren archivos PDF desde fuera de la
+    aplicacion (por ejemplo, el Explorador de Windows) y los suelten aqui
+    para agregarlos a la seccion actual.
+    """
 
     order_changed = Signal()
+    files_dropped = Signal(list)  # list[str]: rutas .pdf soltadas desde fuera
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragDropMode(QAbstractItemView.InternalMove)
         self.setAlternatingRowColors(True)
+        self.setAcceptDrops(True)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - nombre Qt
+        if _pdf_paths_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802 - nombre Qt
+        if _pdf_paths_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - nombre Qt
+        paths = _pdf_paths_from_mime(event.mimeData())
+        if paths:
+            event.acceptProposedAction()
+            self.files_dropped.emit(paths)
+            return
         super().dropEvent(event)
         self.order_changed.emit()
 
@@ -71,15 +113,22 @@ class DocumentListWidget(QListWidget):
 
 
 class SectionTreeWidget(QTreeWidget):
-    """Arbol de secciones/subsecciones del dossier."""
+    """Arbol de secciones/subsecciones del dossier.
+
+    Tambien acepta arrastrar archivos PDF directamente sobre una seccion
+    del arbol (sin necesidad de seleccionarla primero) para agregarlos ahi.
+    """
 
     section_selected = Signal(str)
+    files_dropped_on_section = Signal(str, list)  # section_id, list[str]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setHeaderLabels(["Seccion", "Documentos"])
         self.setColumnWidth(0, 320)
         self.itemSelectionChanged.connect(self._on_selection_changed)
+        self.setAcceptDrops(True)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
 
     def load_sections(self, sections: list[SectionNode]) -> None:
         self.clear()
@@ -112,3 +161,28 @@ class SectionTreeWidget(QTreeWidget):
             if item.data(0, Qt.UserRole) == section_id:
                 self.setCurrentItem(item)
                 return
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 - nombre Qt
+        if _pdf_paths_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802 - nombre Qt
+        if _pdf_paths_from_mime(event.mimeData()):
+            item = self.itemAt(event.position().toPoint())
+            if item is not None:
+                event.acceptProposedAction()
+                return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 - nombre Qt
+        paths = _pdf_paths_from_mime(event.mimeData())
+        if paths:
+            item = self.itemAt(event.position().toPoint())
+            if item is not None:
+                section_id = item.data(0, Qt.UserRole)
+                event.acceptProposedAction()
+                self.files_dropped_on_section.emit(section_id, paths)
+                return
+        super().dropEvent(event)

@@ -329,6 +329,15 @@ página exacta tras las inserciones.
   física seguirá apareciendo en el dossier final (la app nunca modifica el
   PDF de la plantilla), pero se elimina su marcador y sus documentos del
   proyecto.
+- **Arrastrar y soltar archivos PDF** desde el Explorador de Windows: se
+  pueden soltar directamente sobre la lista de documentos (se agregan a la
+  sección seleccionada) o sobre cualquier sección del árbol (sin necesidad
+  de seleccionarla primero). El reordenamiento interno de documentos
+  arrastrándolos dentro de la lista se sigue comportando igual que antes.
+- **Menú de clic derecho**: en la lista de documentos (vista previa, abrir,
+  abrir ubicación, tratamiento de firma, subir/bajar, eliminar) y en el
+  árbol de secciones (agregar subsección, **renombrar sección** — nuevo,
+  eliminar sección).
 
 ## Roadmap / Fase 4
 
