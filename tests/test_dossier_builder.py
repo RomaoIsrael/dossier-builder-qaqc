@@ -125,3 +125,51 @@ def test_generate_can_be_cancelled(populated_project, tmp_path):
     builder = DossierBuilder(project)
     with pytest.raises(CancelledError):
         builder.generate(str(tmp_path), cancel_check=lambda: True)
+
+
+def _populate_page_counts(project):
+    """Simula lo que main_window._inspect_document() hace al agregar un
+    documento desde la UI: detectar su numero de paginas de antemano."""
+    for section in project.iter_all_sections():
+        for doc in section.documents:
+            doc.page_count = pdf_engine.get_page_count(doc.source_path)
+
+
+def test_build_preview_outline_matches_real_assembly_positions(populated_project):
+    project, dyn = populated_project
+    _populate_page_counts(project)
+    builder = DossierBuilder(project)
+
+    rows = builder.build_preview_outline()
+
+    doc_rows = [r for r in rows if r.kind == "doc"]
+    sec_1_1 = _find(project.sections, "1.1")
+    sec_1_2 = _find(project.sections, "1.2")
+    sec_3 = _find(project.sections, "3")
+
+    expected_order = [
+        sec_1_1.documents[0].id,
+        sec_1_1.documents[1].id,
+        sec_1_2.documents[0].id,
+        sec_3.documents[0].id,
+        dyn.documents[0].id,
+    ]
+    assert [r.document_id for r in doc_rows] == expected_order
+    assert [r.start_page for r in doc_rows] == [5, 7, 10, 15, 16]
+    assert [r.page_count for r in doc_rows] == [2, 2, 3, 1, 2]
+
+    template_rows = [r for r in rows if r.kind == "template"]
+    assert len(template_rows) == 7  # las 7 paginas de la plantilla sintetica
+    assert template_rows[0].start_page == 1
+
+
+def test_build_preview_outline_handles_uninspected_documents(populated_project):
+    """Si un documento aun no fue inspeccionado (page_count=None), la vista
+    previa no debe fallar: debe asumir 1 pagina como estimacion minima."""
+    project, dyn = populated_project
+    builder = DossierBuilder(project)  # sin _populate_page_counts
+
+    rows = builder.build_preview_outline()
+    doc_rows = [r for r in rows if r.kind == "doc"]
+    assert all(r.page_count is None for r in doc_rows)
+    assert len(doc_rows) == 5

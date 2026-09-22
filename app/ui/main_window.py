@@ -36,6 +36,8 @@ from app.services.database import DatabaseService
 from app.services.logger import get_logger
 from app.services.settings import SettingsService
 from app.ui.dialogs import (
+    AutoDistributeDialog,
+    DossierOutlinePreviewDialog,
     MetadataDialog,
     NewSectionDialog,
     PdfPreviewDialog,
@@ -124,6 +126,9 @@ class MainWindow(QMainWindow):
         add_action("Metadatos", self.edit_metadata)
         add_action("Configuracion", self.edit_settings)
         toolbar.addSeparator()
+        add_action("Distribuir documentos (auto)", self.auto_distribute_documents)
+        add_action("Vista previa del dossier", self.preview_dossier_outline)
+        toolbar.addSeparator()
         add_action("Validar dossier", self.validate_dossier)
         self.generate_action = add_action("Generar dossier", self.generate_dossier)
 
@@ -151,9 +156,12 @@ class MainWindow(QMainWindow):
         buttons_row1 = QHBoxLayout()
         self.btn_add_docs = QPushButton("+ Agregar documento(s)")
         self.btn_add_docs.clicked.connect(self.add_documents)
+        self.btn_add_folder = QPushButton("+ Agregar carpeta")
+        self.btn_add_folder.clicked.connect(self.add_documents_from_folder)
         self.btn_add_subsection = QPushButton("+ Agregar subseccion")
         self.btn_add_subsection.clicked.connect(self.add_subsection)
         buttons_row1.addWidget(self.btn_add_docs)
+        buttons_row1.addWidget(self.btn_add_folder)
         buttons_row1.addWidget(self.btn_add_subsection)
         center_layout.addLayout(buttons_row1)
 
@@ -350,6 +358,90 @@ class MainWindow(QMainWindow):
         self.project.touch()
         self._refresh_ui()
         self.tree.select_section(section.id)
+
+    def add_documents_from_folder(self) -> None:
+        section = self._current_section()
+        if section is None:
+            QMessageBox.information(self, "Agregar carpeta", "Seleccione primero una seccion.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta con documentos PDF", "")
+        if not folder:
+            return
+
+        pdf_paths = sorted(str(p) for p in Path(folder).rglob("*.pdf"))
+        if not pdf_paths:
+            QMessageBox.information(
+                self, "Agregar carpeta", "No se encontraron archivos PDF en la carpeta seleccionada."
+            )
+            return
+
+        for path in pdf_paths:
+            doc = DocumentItem(source_path=path, order=len(section.documents))
+            self._inspect_document(doc)
+            section.documents.append(doc)
+
+        self.project.touch()
+        self._refresh_ui()
+        self.tree.select_section(section.id)
+        self.statusBar().showMessage(f"{len(pdf_paths)} documento(s) agregado(s) desde la carpeta.", 5000)
+
+    def auto_distribute_documents(self) -> None:
+        if not self._require_project():
+            return
+        if not self.project.sections:
+            QMessageBox.information(self, "Distribuir documentos", "Cargue primero una plantilla con secciones.")
+            return
+
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleccionar documentos a distribuir", "", "Archivos PDF (*.pdf)"
+        )
+        if not paths:
+            return
+
+        dialog = AutoDistributeDialog(paths, self.project.sections, self)
+        if not dialog.exec():
+            return
+
+        assignments = dialog.result_assignments()
+        touched_section_id = None
+        added_count = 0
+        for path, section_id in assignments.items():
+            if not section_id:
+                continue
+            section = self.project.find_section(section_id)
+            if section is None:
+                continue
+            doc = DocumentItem(source_path=path, order=len(section.documents))
+            self._inspect_document(doc)
+            section.documents.append(doc)
+            touched_section_id = section_id
+            added_count += 1
+
+        if added_count == 0:
+            return
+
+        self.project.touch()
+        self._refresh_ui()
+        if touched_section_id:
+            self.tree.select_section(touched_section_id)
+        self.statusBar().showMessage(f"{added_count} documento(s) distribuido(s) automaticamente.", 5000)
+
+    def preview_dossier_outline(self) -> None:
+        if not self._require_project():
+            return
+        if not self.project.template_path:
+            QMessageBox.information(self, "Vista previa del dossier", "Cargue primero una plantilla.")
+            return
+
+        try:
+            builder = DossierBuilder(self.project)
+            rows = builder.build_preview_outline()
+        except pdf_engine.PDFOpenError as exc:
+            QMessageBox.critical(self, "Vista previa del dossier", str(exc))
+            return
+
+        DossierOutlinePreviewDialog(rows, self).exec()
 
     def _inspect_document(self, doc: DocumentItem) -> None:
         """Completa metadatos basicos y deteccion de firma al agregar un documento."""
@@ -620,6 +712,7 @@ class MainWindow(QMainWindow):
         has_project = self.project is not None
         for widget in (
             self.btn_add_docs,
+            self.btn_add_folder,
             self.btn_add_subsection,
             self.btn_move_up,
             self.btn_move_down,

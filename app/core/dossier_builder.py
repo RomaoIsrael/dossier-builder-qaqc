@@ -54,6 +54,18 @@ class GenerationResult:
     validation: ValidationReport = field(repr=False, default=None)
 
 
+@dataclass
+class PreviewRow:
+    """Una fila de la vista previa estructural del dossier (sin abrir archivos)."""
+
+    kind: str  # "template" | "doc"
+    label: str
+    section_label: str
+    start_page: int  # 1-based, pagina estimada de inicio en el dossier final
+    page_count: Optional[int]  # None si el documento aun no fue inspeccionado
+    document_id: Optional[str] = None
+
+
 def _noop_progress(current: int, total: int, message: str) -> None:  # pragma: no cover - trivial
     pass
 
@@ -206,6 +218,58 @@ class DossierBuilder:
             had_warnings=bool(validation.warnings),
             validation=validation,
         )
+
+    # ------------------------------------------------------------------
+    def build_preview_outline(self, template_page_count: Optional[int] = None) -> list[PreviewRow]:
+        """Vista previa estructural y rapida del dossier: el orden final de
+        paginas de plantilla y documentos, SIN abrir ni aplanar ningun PDF
+        (usa el ``page_count`` ya detectado al agregar cada documento). Sirve
+        para revisar el orden antes de generar, incluso en dossiers de
+        cientos de paginas, sin el costo de renderizar miniaturas.
+        """
+        if template_page_count is None:
+            template_page_count = self.project.template_page_count
+        if template_page_count is None and self.project.template_path:
+            template_page_count = pdf_engine.get_page_count(self.project.template_path)
+        template_page_count = template_page_count or 0
+
+        section_labels = {
+            node.id: f"{node.numbering} {node.title}".strip() for node in self.project.iter_all_sections()
+        }
+
+        blocks = self._build_blocks(template_page_count)
+        rows: list[PreviewRow] = []
+        running_page = 1
+        for block in blocks:
+            kind = block[0]
+            if kind == "template":
+                _, page_index = block
+                rows.append(
+                    PreviewRow(
+                        kind="template",
+                        label=f"Pagina de plantilla {page_index + 1}",
+                        section_label="",
+                        start_page=running_page,
+                        page_count=1,
+                    )
+                )
+                running_page += 1
+            elif kind == "doc":
+                _, section_id, doc = block
+                pages = doc.page_count
+                rows.append(
+                    PreviewRow(
+                        kind="doc",
+                        label=doc.name,
+                        section_label=section_labels.get(section_id, ""),
+                        start_page=running_page,
+                        page_count=pages,
+                        document_id=doc.id,
+                    )
+                )
+                running_page += pages if pages else 1
+            # los marcadores "bookmark" (secciones dinamicas) no ocupan pagina.
+        return rows
 
     # ------------------------------------------------------------------
     # Helpers

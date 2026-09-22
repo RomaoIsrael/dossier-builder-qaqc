@@ -3,28 +3,35 @@ nueva subseccion y vista previa de PDF.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import fitz  # PyMuPDF
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
 )
 
+from app.core.dossier_builder import PreviewRow
+from app.core.section_suggester import suggest_sections_for_files
 from app.core.validator import Severity, ValidationReport
 from app.models.project_model import ProjectMetadata, ProjectSettings
+from app.models.section_model import SectionNode
 
 
 class MetadataDialog(QDialog):
@@ -268,3 +275,133 @@ class PdfPreviewDialog(QDialog):
         if self._doc:
             self._doc.close()
         super().closeEvent(event)
+
+
+def _flatten_section_options(sections: list[SectionNode]) -> list[tuple[str, str]]:
+    """Devuelve pares (etiqueta, section_id) en el mismo orden que el arbol."""
+    options: list[tuple[str, str]] = []
+    for root in sections:
+        for node in root.iter_all_sections():
+            label = f"{node.numbering} {node.title}".strip()
+            options.append((label, node.id))
+    return options
+
+
+class AutoDistributeDialog(QDialog):
+    """Sugiere, por archivo, la seccion destino segun palabras clave del
+    nombre (ver ``app/core/section_suggester.py``), y deja que el usuario
+    confirme o corrija cada asignacion antes de agregar los documentos.
+    """
+
+    def __init__(self, file_paths: list[str], sections: list[SectionNode], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Distribuir documentos automaticamente")
+        self.resize(720, 480)
+
+        self._file_paths = file_paths
+        self._section_options = _flatten_section_options(sections)
+        suggestions = suggest_sections_for_files([Path(p).name for p in file_paths], sections)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(
+                "Se sugiere una seccion por archivo segun palabras clave en el nombre. "
+                "Revise y corrija antes de confirmar; puede dejar 'No asignar' para omitir un archivo."
+            )
+        )
+
+        self.table = QTableWidget(len(file_paths), 2)
+        self.table.setHorizontalHeaderLabels(["Archivo", "Seccion sugerida"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+
+        self._combos: list[QComboBox] = []
+        for row, path in enumerate(file_paths):
+            name_item = QTableWidgetItem(Path(path).name)
+            self.table.setItem(row, 0, name_item)
+
+            combo = QComboBox()
+            combo.addItem("(No asignar)", None)
+            for label, section_id in self._section_options:
+                combo.addItem(label, section_id)
+
+            suggestion = suggestions.get(Path(path).name)
+            if suggestion is not None:
+                index = combo.findData(suggestion.id)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+
+            self.table.setCellWidget(row, 1, combo)
+            self._combos.append(combo)
+
+        layout.addWidget(self.table)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def result_assignments(self) -> dict[str, Optional[str]]:
+        return {path: combo.currentData() for path, combo in zip(self._file_paths, self._combos)}
+
+
+class DossierOutlinePreviewDialog(QDialog):
+    """Vista previa estructural del dossier: el orden final de paginas de
+    plantilla y documentos, calculado sin abrir ni aplanar ningun PDF (para
+    poder revisar el orden incluso en dossiers de cientos de paginas antes
+    de generar).
+    """
+
+    def __init__(self, rows: list[PreviewRow], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Vista previa del dossier (orden estructural)")
+        self.resize(760, 560)
+
+        layout = QVBoxLayout(self)
+
+        display_rows = self._collapse_template_runs(rows)
+        total_pages = sum(r.page_count or 1 for r in rows)
+        layout.addWidget(QLabel(f"{len(rows)} elemento(s) - {total_pages} pagina(s) estimada(s) en total"))
+
+        table = QTableWidget(len(display_rows), 4)
+        table.setHorizontalHeaderLabels(["Pagina", "Tipo", "Seccion", "Documento"])
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        for row_index, (page_label, kind_label, section_label, doc_label) in enumerate(display_rows):
+            table.setItem(row_index, 0, QTableWidgetItem(page_label))
+            table.setItem(row_index, 1, QTableWidgetItem(kind_label))
+            table.setItem(row_index, 2, QTableWidgetItem(section_label))
+            table.setItem(row_index, 3, QTableWidgetItem(doc_label))
+
+        layout.addWidget(table)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _collapse_template_runs(rows: list[PreviewRow]) -> list[tuple[str, str, str, str]]:
+        """Agrupa paginas de plantilla consecutivas en una sola fila, para
+        no listar una por una en plantillas de decenas de paginas.
+        """
+        display: list[tuple[str, str, str, str]] = []
+        i = 0
+        while i < len(rows):
+            row = rows[i]
+            if row.kind == "template":
+                start = row.start_page
+                j = i
+                while j < len(rows) and rows[j].kind == "template":
+                    j += 1
+                end = rows[j - 1].start_page
+                page_label = str(start) if start == end else f"{start}-{end}"
+                display.append((page_label, "Plantilla", "", f"{j - i} pagina(s) de plantilla"))
+                i = j
+            else:
+                page_count_label = str(row.page_count) if row.page_count is not None else "?"
+                display.append((str(row.start_page), "Documento", row.section_label, f"{row.label} ({page_count_label} pag.)"))
+                i += 1
+        return display

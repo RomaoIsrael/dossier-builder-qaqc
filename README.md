@@ -120,8 +120,10 @@ app/
         signature_detector.py  Deteccion de firmas (widgets /Sig, ByteRange)
         flattener.py           Aplanado/rasterizado de PDF firmados
         validator.py           Validacion previa (OK / Advertencia / Error)
+        section_suggester.py    Sugerencia de seccion por nombre de archivo
         dossier_builder.py      Orquestador: ensambla, aplana, reconstruye
-                              bookmarks, guarda, genera manifest y reporte
+                              bookmarks, guarda, genera manifest y reporte;
+                              tambien la vista previa estructural rapida
 
     models/
         project_model.py       Project, ProjectMetadata, ProjectSettings
@@ -267,21 +269,38 @@ página exacta tras las inserciones.
 > Están escritos para correr con `pytest` en cualquier máquina con las
 > dependencias instaladas (por ejemplo, tras `install.bat`).
 
-## Roadmap / Fase 2
+## Ya implementado (Fase 2, sobre el MVP inicial)
 
-No implementado en este MVP, pendiente para una siguiente iteración:
+- **Carga de carpetas completas**: botón "+ Agregar carpeta" busca
+  recursivamente todos los `*.pdf` dentro de la carpeta elegida y los agrega
+  a la sección seleccionada (`MainWindow.add_documents_from_folder`).
+- **Sugerencia automática de sección por nombre de archivo**
+  (`app/core/section_suggester.py`): compara palabras clave del nombre del
+  archivo contra el título de cada sección (con sinónimos de jerga QA/QC:
+  MTR/CERT → certificado, GR/REMISION → guía, etc.). Acción de toolbar
+  "Distribuir documentos (auto)": se eligen varios PDF sin preasignar
+  sección, se muestra una tabla con la sección sugerida por archivo
+  (editable con un combo), y solo al confirmar se agregan. La decisión
+  final siempre es del usuario — nunca se asigna nada automáticamente sin
+  confirmación.
+- **Vista previa estructural del dossier** (`DossierBuilder.build_preview_outline`
+  + acción de toolbar "Vista previa del dossier"): antes de generar, muestra
+  el orden final de páginas de plantilla y documentos con la página
+  estimada de inicio de cada uno, **sin abrir ni aplanar ningún PDF** (usa
+  el número de páginas ya detectado al agregar cada documento), por lo que
+  es instantánea incluso en dossiers de cientos de páginas.
 
-- Vista previa de todo el dossier armado (miniaturas de todas las páginas
-  en orden) antes de generar.
+## Roadmap / Fase 3
+
+No implementado todavía, pendiente para una siguiente iteración:
+
+- Vista previa con miniaturas reales (imágenes) de todas las páginas del
+  dossier ya ensamblado, además de la vista estructural ya disponible.
 - Índice automático generado (sección/subsección + número de página), como
   alternativa a respetar el índice de la plantilla.
-- Sugerencia automática de sección según palabras clave en el nombre del
-  archivo ("DIAGRAMA" → 1.1, "CERT"/"MTR" → Certificados, etc.), siempre
-  con la decisión final a cargo del usuario.
 - Tema oscuro / claro configurable y soporte multi-idioma.
 - Validación estructural avanzada de PDF con `pikepdf`/`qpdf` (reparación
   de PDF dañados, análisis más profundo de PAdES).
-- Carga de carpetas completas (no solo selección múltiple de archivos).
 - Bookmarks individuales por documento configurables desde la UI (el motor
   ya lo soporta vía `settings.create_bookmarks_for_individual_docs`).
 - Reconocimiento y validación de vigencia de certificados en firmas PAdES.
