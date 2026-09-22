@@ -12,17 +12,22 @@ class _FakeApp:
         self.stylesheet = css
 
 
+def test_light_and_dark_stylesheets_are_non_empty_and_different():
+    assert LIGHT_STYLESHEET.strip() != ""
+    assert DARK_STYLESHEET.strip() != ""
+    assert LIGHT_STYLESHEET != DARK_STYLESHEET
+
+
 def test_apply_theme_dark_sets_dark_stylesheet():
     app = _FakeApp()
     apply_theme(app, "dark")
     assert app.stylesheet == DARK_STYLESHEET
-    assert app.stylesheet.strip() != ""
 
 
-def test_apply_theme_light_sets_empty_stylesheet():
+def test_apply_theme_light_sets_light_stylesheet():
     app = _FakeApp()
     apply_theme(app, "light")
-    assert app.stylesheet == LIGHT_STYLESHEET == ""
+    assert app.stylesheet == LIGHT_STYLESHEET
 
 
 def test_apply_theme_unknown_value_falls_back_to_light():

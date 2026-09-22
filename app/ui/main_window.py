@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QThread, QUrl, Qt, Signal
+from PySide6.QtCore import QSize, QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStatusBar,
+    QStyle,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -114,29 +115,35 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Principal")
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(toolbar)
 
-        def add_action(text: str, handler) -> QAction:
+        style = self.style()
+
+        def add_action(text: str, handler, icon: Optional[QStyle.StandardPixmap] = None) -> QAction:
             action = QAction(text, self)
+            if icon is not None:
+                action.setIcon(style.standardIcon(icon))
             action.triggered.connect(handler)
             toolbar.addAction(action)
             return action
 
-        add_action("Nuevo proyecto", self.new_project)
-        add_action("Abrir proyecto", self.open_project)
-        add_action("Guardar", self.save_project)
-        add_action("Guardar como...", self.save_project_as)
+        add_action("Nuevo proyecto", self.new_project, QStyle.SP_FileIcon)
+        add_action("Abrir proyecto", self.open_project, QStyle.SP_DialogOpenButton)
+        add_action("Guardar", self.save_project, QStyle.SP_DialogSaveButton)
+        add_action("Guardar como...", self.save_project_as, QStyle.SP_DriveFDIcon)
         toolbar.addSeparator()
-        add_action("Metadatos", self.edit_metadata)
-        add_action("Configuracion", self.edit_settings)
-        add_action("Preferencias", self.edit_preferences)
+        add_action("Metadatos", self.edit_metadata, QStyle.SP_FileDialogInfoView)
+        add_action("Configuracion", self.edit_settings, QStyle.SP_FileDialogDetailedView)
+        add_action("Preferencias", self.edit_preferences, QStyle.SP_ComputerIcon)
         toolbar.addSeparator()
-        add_action("Distribuir documentos (auto)", self.auto_distribute_documents)
-        add_action("Vista previa del dossier", self.preview_dossier_outline)
-        add_action("Vista previa con miniaturas", self.preview_dossier_thumbnails)
+        add_action("Distribuir documentos (auto)", self.auto_distribute_documents, QStyle.SP_FileDialogListView)
+        add_action("Vista previa del dossier", self.preview_dossier_outline, QStyle.SP_FileDialogContentsView)
+        add_action("Vista previa con miniaturas", self.preview_dossier_thumbnails, QStyle.SP_DirIcon)
         toolbar.addSeparator()
-        add_action("Validar dossier", self.validate_dossier)
-        self.generate_action = add_action("Generar dossier", self.generate_dossier)
+        add_action("Validar dossier", self.validate_dossier, QStyle.SP_DialogApplyButton)
+        self.generate_action = add_action("Generar dossier", self.generate_dossier, QStyle.SP_MediaPlay)
 
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
@@ -151,7 +158,7 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center)
 
         self.section_label = QLabel("Seleccione una seccion")
-        self.section_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.section_label.setStyleSheet("font-weight: 600; font-size: 13pt; padding: 4px 2px;")
         center_layout.addWidget(self.section_label)
 
         self.doc_list = DocumentListWidget()
@@ -166,9 +173,12 @@ class MainWindow(QMainWindow):
         self.btn_add_folder.clicked.connect(self.add_documents_from_folder)
         self.btn_add_subsection = QPushButton("+ Agregar subseccion")
         self.btn_add_subsection.clicked.connect(self.add_subsection)
+        self.btn_remove_section = QPushButton("Eliminar seccion")
+        self.btn_remove_section.clicked.connect(self.remove_section)
         buttons_row1.addWidget(self.btn_add_docs)
         buttons_row1.addWidget(self.btn_add_folder)
         buttons_row1.addWidget(self.btn_add_subsection)
+        buttons_row1.addWidget(self.btn_remove_section)
         center_layout.addLayout(buttons_row1)
 
         buttons_row2 = QHBoxLayout()
@@ -348,6 +358,64 @@ class MainWindow(QMainWindow):
         self.project.touch()
         self._refresh_ui()
         self.tree.select_section(child.id)
+
+    def remove_section(self) -> None:
+        if not self._require_project():
+            return
+        section = self._current_section()
+        if section is None:
+            QMessageBox.information(self, "Eliminar seccion", "Seleccione primero una seccion.")
+            return
+
+        label = f"{section.numbering} {section.title}".strip()
+        doc_count = section.total_documents()
+        child_count = len(section.children)
+
+        if section.is_dynamic:
+            message = f"Eliminar la subseccion '{label}'?"
+            if doc_count or child_count:
+                message += (
+                    f"\n\nSe eliminaran tambien sus {doc_count} documento(s) "
+                    f"y {child_count} subseccion(es)."
+                )
+        else:
+            message = (
+                f"'{label}' proviene de un bookmark de la plantilla.\n\n"
+                "Al eliminarla se quita su marcador y se eliminan del proyecto sus "
+                f"{doc_count} documento(s) y {child_count} subseccion(es), pero la pagina "
+                "separadora fisica de la plantilla seguira apareciendo en el dossier final "
+                "(esta aplicacion nunca modifica el PDF de la plantilla en si).\n\n"
+                "Continuar?"
+            )
+
+        confirm = QMessageBox.question(self, "Eliminar seccion", message)
+        if confirm != QMessageBox.Yes:
+            return
+
+        container = self._find_section_container(section.id)
+        if container is None:
+            return
+        container.remove(section)
+
+        renumber_sections(self.project.sections)
+        self.project.touch()
+        self.current_section_id = None
+        self._refresh_ui()
+
+    def _find_section_container(self, section_id: str) -> Optional[list[SectionNode]]:
+        """Devuelve la lista (raices del proyecto, o children de algun nodo)
+        que contiene directamente al nodo con ``section_id``."""
+
+        def search(nodes: list[SectionNode]) -> Optional[list[SectionNode]]:
+            for node in nodes:
+                if node.id == section_id:
+                    return nodes
+                found = search(node.children)
+                if found is not None:
+                    return found
+            return None
+
+        return search(self.project.sections)
 
     def _current_section(self) -> Optional[SectionNode]:
         if not self.project or not self.current_section_id:
@@ -744,6 +812,7 @@ class MainWindow(QMainWindow):
             self.btn_add_docs,
             self.btn_add_folder,
             self.btn_add_subsection,
+            self.btn_remove_section,
             self.btn_move_up,
             self.btn_move_down,
             self.btn_remove,

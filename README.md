@@ -314,6 +314,22 @@ página exacta tras las inserciones.
   "Preferencias"): se guarda en la configuración global de la aplicación y
   se aplica de inmediato al cambiarlo, sin reiniciar.
 
+## Ya implementado (mejoras posteriores)
+
+- **Interfaz modernizada**: `app/ui/theme.py` se reescribió con una hoja de
+  estilos completa para ambos temas (claro y oscuro) — paleta de colores
+  consistente, bordes redondeados, estados hover/focus/pressed, cabeceras de
+  tabla diferenciadas, scrollbars finos, y toolbar con íconos nativos de Qt
+  (sin depender de archivos de imagen externos).
+- **Eliminar secciones y subsecciones**: botón "Eliminar sección" junto al
+  árbol de secciones (`MainWindow.remove_section`). Al eliminar una
+  subsección dinámica (creada por el usuario) se quita por completo, junto
+  con sus documentos. Al eliminar una sección derivada de un bookmark de la
+  plantilla, se muestra una advertencia explicando que su página separadora
+  física seguirá apareciendo en el dossier final (la app nunca modifica el
+  PDF de la plantilla), pero se elimina su marcador y sus documentos del
+  proyecto.
+
 ## Roadmap / Fase 4
 
 No implementado todavía, pendiente para una siguiente iteración:
