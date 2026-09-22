@@ -385,6 +385,24 @@ página exacta tras las inserciones.
     calculado después de armar el dossier completo (`DossierBuilder`
     `_rename_signed_originals_with_page_numbers`). `manifest.json` refleja
     las rutas ya renombradas en `backup_path` y `flattened_path`.
+- **Fix: no inventar numeración para bookmarks sin número** (ej. "CONTENIDO",
+  típicamente la raíz/matriz del índice de la plantilla, sin numeración
+  propia). Antes, `renumber_sections()` — que corre cada vez que se agrega,
+  renombra o elimina una sección — renumeraba **todas** las secciones sin
+  distinción, pisando el título de nodos como "CONTENIDO" con un número que
+  nunca tuvieron. Ahora `renumber_sections()` solo numera las secciones
+  **dinámicas** (creadas por el usuario con "+ Agregar subsección"); las que
+  vienen de un bookmark de la plantilla —tengan número o no— nunca se
+  tocan. `build_section_tree_from_toc()` tampoco sintetiza numeración al
+  leer la plantilla por primera vez: se respeta el índice/bookmarks tal
+  como están, sin inventar nada.
+- **Bookmarks por documento individual, ahora con checkbox**: en
+  Configuración, "Crear un bookmark por cada documento insertado" (motor ya
+  existente vía `settings.create_bookmarks_for_individual_docs`, nunca
+  antes expuesto en la interfaz). Es independiente del índice automático:
+  no crea ninguna página nueva, solo agrega una entrada de bookmark por
+  documento (anidada bajo su sección) para poder saltar directo a él desde
+  el panel de marcadores del lector de PDF.
 
 ## Roadmap / Fase 4
 
@@ -393,8 +411,6 @@ No implementado todavía, pendiente para una siguiente iteración:
 - Soporte multi-idioma (actualmente solo español).
 - Validación estructural avanzada de PDF con `pikepdf`/`qpdf` (reparación
   de PDF dañados, análisis más profundo de PAdES).
-- Bookmarks individuales por documento configurables desde la UI (el motor
-  ya lo soporta vía `settings.create_bookmarks_for_individual_docs`).
 - Reconocimiento y validación de vigencia de certificados en firmas PAdES.
 - Miniaturas de TODAS las páginas de cada documento (hoy solo la primera),
   con carga diferida (lazy) para no saturar la memoria en dossiers enormes.

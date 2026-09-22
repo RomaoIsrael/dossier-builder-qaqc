@@ -401,3 +401,32 @@ def test_flattened_document_backup_is_renamed_with_start_page(populated_project,
     manifest_entry = next(d for d in manifest["documents"] if d["name"] == target_doc.name)
     assert manifest_entry["backup_path"] == target_doc.backup_path
     assert manifest_entry["flattened_path"] == target_doc.flattened_path
+
+
+def test_generate_with_individual_document_bookmarks(populated_project, tmp_path):
+    """settings.create_bookmarks_for_individual_docs agrega, ademas de los
+    bookmarks de seccion, uno por cada documento insertado (anidado un
+    nivel mas profundo que su seccion), sin crear ninguna pagina nueva.
+    """
+    project, dyn = populated_project
+    project.settings.create_bookmarks_for_individual_docs = True
+    builder = DossierBuilder(project)
+
+    result = builder.generate(str(tmp_path))
+    assert result.total_pages == 17  # no se agrega ninguna pagina
+
+    out_doc = fitz.open(result.output_pdf_path)
+    try:
+        toc = out_doc.get_toc(simple=True)
+    finally:
+        out_doc.close()
+    toc_by_title = {title: (level, page) for level, title, page in toc}
+
+    sec_1_1 = _find(project.sections, "1.1")
+    doc_1_1a, doc_1_1b = sec_1_1.documents[0], sec_1_1.documents[1]
+
+    # El bookmark de la seccion sigue igual (nivel 2, pagina 4); los de sus
+    # documentos quedan un nivel mas adentro (nivel 3), en sus paginas reales.
+    assert toc_by_title["1.1 DIAGRAMAS MECANICOS"] == (2, 4)
+    assert toc_by_title[doc_1_1a.name] == (3, 5)
+    assert toc_by_title[doc_1_1b.name] == (3, 7)

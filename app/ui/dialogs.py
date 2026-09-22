@@ -116,6 +116,12 @@ class SettingsDialog(QDialog):
         self.output_dir_edit = QLineEdit(settings.output_dir)
         form.addRow("Carpeta de salida por defecto", self.output_dir_edit)
 
+        self.doc_bookmarks_checkbox = QCheckBox(
+            "Crear un bookmark por cada documento insertado (ademas de los de seccion)"
+        )
+        self.doc_bookmarks_checkbox.setChecked(settings.create_bookmarks_for_individual_docs)
+        form.addRow("", self.doc_bookmarks_checkbox)
+
         self.auto_index_checkbox = QCheckBox("Generar indice automatico (seccion/subseccion + pagina)")
         self.auto_index_checkbox.setChecked(settings.generate_automatic_index)
         form.addRow("", self.auto_index_checkbox)
@@ -135,9 +141,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel("Variables disponibles: {codigo} {pozo} {wo} {tipo} {revision} {contrato} {bloque}"))
         layout.addWidget(
             QLabel(
-                "El indice automatico se inserta al comienzo del dossier final, ademas del indice "
-                "existente en la plantilla (que se respeta sin cambios). Con 'Incluir documentos "
-                "individuales', cada documento aparece anidado bajo su seccion, ej.:\n"
+                "'Crear un bookmark por cada documento' agrega, al arbol de bookmarks del PDF final, "
+                "una entrada por cada documento insertado (para poder saltar directo a el desde el "
+                "panel de marcadores del lector de PDF), ademas de las de seccion. No crea ninguna "
+                "pagina nueva ni modifica el indice de la plantilla.\n\n"
+                "El indice automatico (mas abajo) es distinto y opcional: inserta una PAGINA nueva al "
+                "comienzo del dossier final, ademas del indice ya existente en la plantilla (que "
+                "siempre se respeta sin cambios). Con 'Incluir documentos individuales', esa pagina "
+                "tambien lista cada documento anidado bajo su seccion, ej.:\n"
                 "   1.1 DIAGRAMAS MECANICOS ........... 5\n"
                 "       Diagrama_Final_Firmado.pdf ..... 7"
             )
@@ -150,6 +161,7 @@ class SettingsDialog(QDialog):
         settings.signature_mode = self.signature_mode_combo.currentData()
         settings.output_naming_pattern = self.naming_edit.text() or settings.output_naming_pattern
         settings.output_dir = self.output_dir_edit.text()
+        settings.create_bookmarks_for_individual_docs = self.doc_bookmarks_checkbox.isChecked()
         settings.generate_automatic_index = self.auto_index_checkbox.isChecked()
         settings.include_documents_in_index = self.include_docs_checkbox.isChecked()
         return settings

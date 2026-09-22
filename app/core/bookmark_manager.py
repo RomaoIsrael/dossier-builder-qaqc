@@ -45,28 +45,36 @@ def build_section_tree_from_toc(entries: list[TocEntry]) -> list[SectionNode]:
 
         stack.append(node)
 
-    fill_missing_numbering(roots)
+    # Deliberadamente NO se sintetiza numeracion para bookmarks que no la
+    # traian en su titulo (por ejemplo "CONTENIDO", que suele ser la raiz
+    # del arbol de bookmarks de la plantilla y no un apartado numerado). El
+    # objetivo es respetar el indice/bookmarks de la plantilla tal como
+    # vienen, sin inventarles nada; ver renumber_sections() para la unica
+    # numeracion que SI se calcula (la de secciones creadas por el usuario).
     return roots
 
 
-def fill_missing_numbering(nodes: list[SectionNode], parent_numbering: str = "") -> None:
-    """Completa la numeracion de nodos que no la traian en el titulo del bookmark."""
-    for index, node in enumerate(nodes, start=1):
-        if not node.numbering:
-            node.numbering = f"{parent_numbering}.{index}" if parent_numbering else str(index)
-        fill_missing_numbering(node.children, node.numbering)
-
-
 def renumber_sections(nodes: list[SectionNode], parent_numbering: str = "") -> None:
-    """Recalcula la numeracion de TODOS los nodos segun su orden actual.
+    """Recalcula la numeracion de las secciones **dinamicas** (creadas por el
+    usuario con "+ Agregar subseccion") segun su orden actual.
 
-    Se usa despues de que el usuario agrega, elimina o reordena secciones
-    manualmente en la interfaz.
+    Las secciones que vienen de un bookmark de la plantilla (``is_dynamic``
+    False) NUNCA se tocan aqui: conservan siempre su numeracion y titulo
+    originales, incluidas las que no tienen numero (como "CONTENIDO", la
+    raiz del indice de la plantilla) - inventarles un numero seria alterar
+    el indice original, que es justamente lo que no se quiere hacer. Se usa
+    despues de que el usuario agrega, elimina o renombra secciones.
     """
-    for index, node in enumerate(sorted(nodes, key=lambda n: n.order), start=1):
-        node.order = index - 1
-        node.numbering = f"{parent_numbering}.{index}" if parent_numbering else str(index)
-        renumber_sections(node.children, node.numbering)
+    dynamic_index = 0
+    for node in sorted(nodes, key=lambda n: n.order):
+        if node.is_dynamic:
+            dynamic_index += 1
+            node.numbering = f"{parent_numbering}.{dynamic_index}" if parent_numbering else str(dynamic_index)
+        # Para descender a los hijos se usa la numeracion de ESTE nodo si
+        # tiene una (propia de plantilla o recien asignada arriba); si no
+        # tiene ninguna (como "CONTENIDO"), se propaga la del padre tal cual.
+        effective_numbering = node.numbering or parent_numbering
+        renumber_sections(node.children, effective_numbering)
 
 
 def build_toc_for_document(
