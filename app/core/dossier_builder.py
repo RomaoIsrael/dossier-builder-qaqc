@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import getpass
 import json
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -154,6 +156,16 @@ def _render_index_document(entries: list[tuple[int, str, int]]) -> fitz.Document
     return doc
 
 
+# Cada cuantas inserciones (paginas de plantilla o documentos) se guarda y
+# reabre el documento en construccion. PyMuPDF puede degradar su estado
+# interno (cache de objetos/graft map) tras MUCHAS llamadas a insert_pdf()
+# seguidas sobre el mismo documento que va creciendo, lo que en dossiers con
+# muchos documentos puede terminar en un error de bajo nivel como "source
+# object number out of range". Guardar y reabrir periodicamente resetea ese
+# estado interno y evita el problema, a cambio de un poco de E/S extra.
+_FLUSH_EVERY_N_INSERTS = 15
+
+
 def _noop_progress(current: int, total: int, message: str) -> None:  # pragma: no cover - trivial
     pass
 
@@ -250,6 +262,22 @@ class DossierBuilder:
             for node in self.project.iter_all_sections()
             if node.template_page_index is not None
         }
+        flush_temp_paths: list[str] = []
+        inserts_since_flush = 0
+
+        def flush_out_doc() -> None:
+            """Guarda el documento en construccion a un archivo temporal y lo
+            reabre, para resetear el estado interno de PyMuPDF (ver
+            _FLUSH_EVERY_N_INSERTS mas arriba)."""
+            nonlocal out_doc, inserts_since_flush
+            fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+            os.close(fd)
+            out_doc.save(temp_path)
+            out_doc.close()
+            flush_temp_paths.append(temp_path)
+            out_doc = fitz.open(temp_path)
+            inserts_since_flush = 0
+
         try:
             blocks = self._build_blocks(template_page_count)
             for block in blocks:
@@ -262,6 +290,7 @@ class DossierBuilder:
                         raise DossierGenerationError(
                             f"No se pudo insertar la pagina {page_index + 1} de la plantilla en el dossier: {exc}"
                         ) from exc
+                    inserts_since_flush += 1
                     # La pagina separadora fisica que acabamos de copiar ES la
                     # posicion del bookmark de su seccion (no un marcador aparte,
                     # para no contarla dos veces).
@@ -279,12 +308,16 @@ class DossierBuilder:
                     first_page = out_doc.page_count
                     try:
                         pdf_engine.insert_pdf_pages(out_doc, insert_path, out_doc.page_count)
-                    except pdf_engine.PDFOpenError as exc:
+                    except Exception as exc:  # noqa: BLE001 - incluye errores de bajo nivel de PyMuPDF
                         raise DossierGenerationError(
-                            f"No se pudo insertar '{doc.name}' en el dossier: {exc}"
+                            f"No se pudo insertar '{doc.name}' en el dossier: {exc}. Ruta: {insert_path}"
                         ) from exc
+                    inserts_since_flush += 1
                     document_page_position[doc.id] = first_page
                     tick(f"Insertando: {doc.name}")
+
+                if inserts_since_flush >= _FLUSH_EVERY_N_INSERTS:
+                    flush_out_doc()
 
             # -- 2b. Indice automatico (opcional) -------------------------------
             index_inserted = False
@@ -319,6 +352,11 @@ class DossierBuilder:
             for single_page_doc in template_page_docs.values():
                 single_page_doc.close()
             out_doc.close()
+            for temp_path in flush_temp_paths:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("No se pudo borrar el archivo temporal '%s'", temp_path)
 
         # -- 6. Manifest + reporte ------------------------------------------
         sha_final = sha256_file(output_path)
@@ -420,7 +458,11 @@ class DossierBuilder:
             index_doc.close()
             index_doc = render_with_offset(index_page_count)
 
-        out_doc.insert_pdf(index_doc, start_at=0)
+        try:
+            out_doc.insert_pdf(index_doc, start_at=0)
+        except Exception as exc:  # noqa: BLE001 - incluye errores de bajo nivel de PyMuPDF
+            index_doc.close()
+            raise DossierGenerationError(f"No se pudo insertar el indice automatico en el dossier: {exc}") from exc
         index_doc.close()
 
         for key in list(section_page_position):

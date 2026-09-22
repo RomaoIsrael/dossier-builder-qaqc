@@ -3,6 +3,7 @@ import json
 import fitz
 import pytest
 
+import app.core.dossier_builder as dossier_builder_module
 from app.core import pdf_engine
 from app.core.bookmark_manager import build_section_tree_from_toc
 from app.core.dossier_builder import (
@@ -310,3 +311,57 @@ def test_manifest_and_report_include_document_start_pages(populated_project, tmp
     matching_lines = [line for line in report_text.splitlines() if doc_1_2a.name in line]
     assert matching_lines, f"no se encontro '{doc_1_2a.name}' en el reporte"
     assert "pag. 10" in matching_lines[0]
+
+
+def test_generate_wraps_low_level_pdf_errors_with_document_name(populated_project, tmp_path, monkeypatch):
+    """Cualquier error de bajo nivel de PyMuPDF al insertar un documento
+    (no solo PDFOpenError) debe quedar envuelto en DossierGenerationError
+    con el nombre del documento, en vez de propagarse como excepcion cruda
+    con un mensaje generico e inutil para el usuario.
+    """
+    project, dyn = populated_project
+    builder = DossierBuilder(project)
+
+    sec_1_1 = _find(project.sections, "1.1")
+    first_doc_name = sec_1_1.documents[0].name
+
+    def _boom(dest_doc, insert_path, at_index):
+        raise RuntimeError("source object number out of range")
+
+    monkeypatch.setattr(pdf_engine, "insert_pdf_pages", _boom)
+
+    with pytest.raises(DossierGenerationError) as exc_info:
+        builder.generate(str(tmp_path))
+
+    assert first_doc_name in str(exc_info.value)
+    assert "source object number out of range" in str(exc_info.value)
+
+
+def test_generate_with_frequent_flush_produces_identical_result(populated_project, tmp_path, monkeypatch):
+    """DossierBuilder guarda y reabre periodicamente el documento en
+    construccion (ver _FLUSH_EVERY_N_INSERTS) para evitar un problema de
+    PyMuPDF con muchas inserciones acumuladas. Forzando un flush muy
+    frecuente (cada 2 inserciones en vez de cada 15), el resultado final
+    debe ser exactamente el mismo que sin flush: mismas paginas totales y
+    mismos bookmarks (ver test_generate_bookmarks_point_to_correct_pages).
+    """
+    project, dyn = populated_project
+    monkeypatch.setattr(dossier_builder_module, "_FLUSH_EVERY_N_INSERTS", 2)
+    builder = DossierBuilder(project)
+
+    result = builder.generate(str(tmp_path))
+    assert result.total_pages == 17
+    assert result.total_documents == 5
+
+    out_doc = fitz.open(result.output_pdf_path)
+    try:
+        toc = out_doc.get_toc(simple=True)
+    finally:
+        out_doc.close()
+    toc_by_title = {title: page for _, title, page in toc}
+    assert toc_by_title["1 CONCILIACION DE MATERIALES"] == 3
+    assert toc_by_title["1.1 DIAGRAMAS MECANICOS"] == 4
+    assert toc_by_title["1.2 PULL & RUN BES"] == 9
+    assert toc_by_title["2 CERTIFICADOS DE CALIDAD"] == 13
+    assert toc_by_title["3 ANEXOS"] == 14
+    assert toc_by_title["REPORTES FOTOGRAFICOS"] == 16

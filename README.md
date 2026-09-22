@@ -339,11 +339,16 @@ página exacta tras las inserciones.
   árbol de secciones (agregar subsección, **renombrar sección** — nuevo,
   eliminar sección).
 - **Fix**: error `source object number out of range` de PyMuPDF al generar
-  el dossier (reutilizar el mismo documento de origen de la plantilla para
-  copiar sus páginas una por una, intercalado con la inserción de otros
-  documentos, podía corromper el "graft map" interno de la librería). Cada
-  página de la plantilla ahora se extrae de antemano a su propio documento
-  de un solo uso.
+  el dossier. Causa raíz confirmada con traceback real: PyMuPDF puede
+  degradar su estado interno (cache de objetos/"graft map") después de
+  **muchas llamadas seguidas a `insert_pdf()` sobre el mismo documento de
+  destino** que va creciendo (típico en dossiers con varias decenas de
+  documentos). Fix: el documento en construcción se guarda y reabre
+  automáticamente cada 15 inserciones (`_FLUSH_EVERY_N_INSERTS` en
+  `dossier_builder.py`), lo que resetea ese estado interno sin alterar el
+  resultado final. Además, cualquier error de bajo nivel de PyMuPDF al
+  insertar un documento ahora queda envuelto en un mensaje claro que nombra
+  el archivo exacto que falló, en vez de un "Error inesperado" genérico.
 - **Trazabilidad de página de inicio por documento**: cada documento
   original queda registrado con la página donde empieza en el dossier
   final:
