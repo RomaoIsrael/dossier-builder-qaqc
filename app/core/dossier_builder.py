@@ -215,7 +215,35 @@ class DossierBuilder:
         section_page_position: dict[str, int] = {}
         document_page_position: dict[str, int] = {}
 
+        # Cada pagina de la plantilla se extrae de antemano a su propio
+        # documento PyMuPDF de una sola pagina, en vez de reutilizar el mismo
+        # `template_doc` abierto para copiar paginas una por una intercaladas
+        # con la insercion de los demas documentos. Reutilizar el mismo
+        # documento de origen para muchas llamadas a insert_pdf() separadas,
+        # intercaladas con inserciones desde OTROS documentos que van
+        # haciendo crecer out_doc, puede hacer que PyMuPDF falle con
+        # "source object number out of range" (problema conocido de la
+        # libreria con el "graft map" cuando se reutiliza el mismo origen
+        # despues de que el destino cambio por otras inserciones). Al usar
+        # un documento de origen distinto y de un solo uso por cada pagina,
+        # ese problema no puede ocurrir.
         template_doc = pdf_engine.open_document(str(template_path))
+        try:
+            template_page_docs: dict[int, fitz.Document] = {}
+            try:
+                for page_index in range(template_page_count):
+                    single_page_doc = fitz.open()
+                    single_page_doc.insert_pdf(template_doc, from_page=page_index, to_page=page_index)
+                    template_page_docs[page_index] = single_page_doc
+            except Exception as exc:  # noqa: BLE001 - error de bajo nivel de PyMuPDF
+                for doc in template_page_docs.values():
+                    doc.close()
+                raise DossierGenerationError(
+                    f"No se pudo leer la pagina {page_index + 1} de la plantilla: {exc}"
+                ) from exc
+        finally:
+            template_doc.close()
+
         out_doc = pdf_engine.new_empty_document()
         physical_section_by_page: dict[int, str] = {
             node.template_page_index: node.id
@@ -228,7 +256,12 @@ class DossierBuilder:
                 kind = block[0]
                 if kind == "template":
                     _, page_index = block
-                    out_doc.insert_pdf(template_doc, from_page=page_index, to_page=page_index, start_at=out_doc.page_count)
+                    try:
+                        out_doc.insert_pdf(template_page_docs[page_index], start_at=out_doc.page_count)
+                    except Exception as exc:  # noqa: BLE001 - error de bajo nivel de PyMuPDF
+                        raise DossierGenerationError(
+                            f"No se pudo insertar la pagina {page_index + 1} de la plantilla en el dossier: {exc}"
+                        ) from exc
                     # La pagina separadora fisica que acabamos de copiar ES la
                     # posicion del bookmark de su seccion (no un marcador aparte,
                     # para no contarla dos veces).
@@ -283,7 +316,8 @@ class DossierBuilder:
             pdf_engine.save_document(out_doc, str(output_path), optimize=True)
             tick("Guardando dossier final")
         finally:
-            template_doc.close()
+            for single_page_doc in template_page_docs.values():
+                single_page_doc.close()
             out_doc.close()
 
         # -- 6. Manifest + reporte ------------------------------------------
