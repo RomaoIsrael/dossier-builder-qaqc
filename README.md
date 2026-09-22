@@ -349,6 +349,14 @@ página exacta tras las inserciones.
   resultado final. Además, cualquier error de bajo nivel de PyMuPDF al
   insertar un documento ahora queda envuelto en un mensaje claro que nombra
   el archivo exacto que falló, en vez de un "Error inesperado" genérico.
+  Con ese mensaje se identificó que, en un caso real, el fallo persistía
+  para un archivo específico incluso con el flush activo — apuntando a que
+  ese PDF en particular tiene una estructura interna dañada (típico en
+  PDF escaneados o que ya pasaron por otras herramientas de combinación).
+  Fix adicional: `insert_pdf_pages()` ahora reintenta automáticamente tras
+  **reparar** (reescribir desde cero) una copia temporal del PDF de origen
+  cuando la inserción directa falla, antes de darse por vencido — esto
+  suele resolver estructuras xref/objetos rotos sin intervención manual.
 - **Trazabilidad de página de inicio por documento**: cada documento
   original queda registrado con la página donde empieza en el dossier
   final:

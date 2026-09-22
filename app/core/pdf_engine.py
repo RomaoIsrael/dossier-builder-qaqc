@@ -6,7 +6,9 @@ simples (listas/tuplas) para poder probarse de forma aislada.
 """
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from typing import Optional
 
@@ -100,6 +102,33 @@ def extract_toc(path: str) -> list[TocEntry]:
     return [TocEntry(level=lvl, title=title, page_index=page - 1) for lvl, title, page in raw]
 
 
+def _repair_pdf_copy(path: str) -> Optional[str]:
+    """Intenta reescribir un PDF a un archivo temporal para reparar
+    estructuras internas danadas (tablas xref/numeros de objeto rotos,
+    tipico en PDF escaneados o que ya pasaron por otras herramientas de
+    combinacion). Reabrir y volver a guardar con PyMuPDF fuerza una
+    reconstruccion completa de esas estructuras.
+
+    Devuelve la ruta del archivo reparado, o ``None`` si no se pudo reparar
+    (en cuyo caso el llamador debe reportar el error original).
+    """
+    try:
+        doc = fitz.open(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo reparar '%s': no se pudo reabrir (%s)", path, exc)
+        return None
+    try:
+        fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        doc.save(temp_path, garbage=4, clean=True, deflate=True)
+        return temp_path
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo reparar '%s': fallo al reescribir (%s)", path, exc)
+        return None
+    finally:
+        doc.close()
+
+
 def insert_pdf_pages(dest_doc: fitz.Document, insert_path: str, at_index: int) -> int:
     """Inserta todas las paginas de ``insert_path`` en ``dest_doc`` en la posicion ``at_index``.
 
@@ -107,12 +136,43 @@ def insert_pdf_pages(dest_doc: fitz.Document, insert_path: str, at_index: int) -
     convencion de PyMuPDF: las paginas insertadas quedan *despues* de la
     pagina ``at_index - 1`` (es decir, antes de lo que hoy es la pagina
     ``at_index``). Usar ``at_index = dest_doc.page_count`` para agregar al final.
+
+    Si la insercion directa falla por un error de bajo nivel de PyMuPDF
+    (por ejemplo "source object number out of range", tipico de PDF con
+    estructuras internas danadas), se intenta reparar una copia del origen
+    reescribiendolo desde cero y se reintenta una vez desde esa copia antes
+    de darse por vencido.
     """
     src_doc = open_document(insert_path)
     try:
         count = src_doc.page_count
         dest_doc.insert_pdf(src_doc, start_at=at_index)
         return count
+    except Exception as exc:  # noqa: BLE001 - incluye errores de bajo nivel de PyMuPDF
+        logger.warning(
+            "Fallo al insertar '%s' directamente (%s); intentando reparar y reintentar...", insert_path, exc
+        )
+        repaired_path = _repair_pdf_copy(insert_path)
+        if repaired_path is None:
+            raise PDFOpenError(f"No se pudo insertar '{insert_path}': {exc}") from exc
+        try:
+            repaired_doc = open_document(repaired_path)
+            try:
+                count = repaired_doc.page_count
+                dest_doc.insert_pdf(repaired_doc, start_at=at_index)
+                logger.info("Reparacion exitosa: '%s' se pudo insertar tras reescribirlo.", insert_path)
+                return count
+            finally:
+                repaired_doc.close()
+        except Exception as exc2:  # noqa: BLE001
+            raise PDFOpenError(
+                f"No se pudo insertar '{insert_path}' incluso despues de intentar repararlo: {exc2}"
+            ) from exc2
+        finally:
+            try:
+                os.unlink(repaired_path)
+            except OSError:
+                pass
     finally:
         src_doc.close()
 

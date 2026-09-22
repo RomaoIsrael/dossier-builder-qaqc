@@ -71,3 +71,52 @@ def test_insert_pdf_pages_in_the_middle(make_pdf):
     text_page1 = dest[1].get_text()
     assert "extra" in text_page1
     dest.close()
+
+
+def test_insert_pdf_pages_retries_after_repair_on_low_level_error(make_pdf, monkeypatch):
+    """Si insert_pdf() falla la primera vez con un error de bajo nivel de
+    PyMuPDF (tipico de un PDF con estructura interna danada), debe
+    reintentarse una vez tras reparar (reescribir) una copia del origen,
+    en vez de fallar de inmediato.
+    """
+    base_path = make_pdf(page_count=1, label="base")
+    extra_path = make_pdf(page_count=2, label="extra")
+
+    dest = pdf_engine.copy_document(base_path)
+
+    call_count = {"n": 0}
+    original_insert_pdf = fitz.Document.insert_pdf
+
+    def flaky_insert_pdf(self, src, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("source object number out of range")
+        return original_insert_pdf(self, src, **kwargs)
+
+    monkeypatch.setattr(fitz.Document, "insert_pdf", flaky_insert_pdf)
+
+    inserted = pdf_engine.insert_pdf_pages(dest, extra_path, dest.page_count)
+
+    assert inserted == 2
+    assert dest.page_count == 3  # 1 original + 2 insertadas tras el reintento
+    assert call_count["n"] == 2  # fallo la 1ra vez, funciono en el reintento (post-reparacion)
+    dest.close()
+
+
+def test_insert_pdf_pages_raises_clear_error_when_repair_also_fails(make_pdf, monkeypatch):
+    """Si ni la insercion directa ni el reintento tras reparar funcionan,
+    debe lanzarse PDFOpenError (no una excepcion cruda de PyMuPDF)."""
+    base_path = make_pdf(page_count=1, label="base")
+    extra_path = make_pdf(page_count=1, label="extra")
+
+    dest = pdf_engine.copy_document(base_path)
+
+    def always_fails(self, src, **kwargs):
+        raise RuntimeError("source object number out of range")
+
+    monkeypatch.setattr(fitz.Document, "insert_pdf", always_fails)
+
+    with pytest.raises(pdf_engine.PDFOpenError):
+        pdf_engine.insert_pdf_pages(dest, extra_path, dest.page_count)
+
+    dest.close()
