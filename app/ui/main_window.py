@@ -285,8 +285,22 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
 
+        # Antes de abrir el explorador de archivos, se aclara que lo que se
+        # va a elegir es la PLANTILLA (caratula + indice + paginas
+        # separadoras con bookmarks), no un documento cualquiera: sin este
+        # aviso no queda claro que archivo hay que buscar ni para que.
+        QMessageBox.information(
+            self,
+            "Elegir plantilla",
+            "A continuacion, elegir plantilla: seleccione el PDF que se usara como plantilla "
+            "del dossier (el que tiene la caratula, el indice y las paginas separadoras de cada "
+            "seccion, con sus bookmarks).\n\n"
+            "Los documentos individuales de cada seccion se agregan despues, ya con el "
+            "proyecto creado.",
+        )
+
         template_path, _ = QFileDialog.getOpenFileName(
-            self, "Seleccionar plantilla del dossier", "", "Archivos PDF (*.pdf)"
+            self, "Elegir plantilla del dossier (PDF)", "", "Archivos PDF (*.pdf)"
         )
         if not template_path:
             return

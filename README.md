@@ -477,6 +477,15 @@ página exacta tras las inserciones.
   `manifest.json` (`generation_number`) y en `Reporte_Generacion.pdf`
   ("Generacion / revision N.° X de este proyecto"), ademas del historial
   ya existente en el indice SQLite local (`DatabaseService.list_generations`).
+- **Copyright en "Acerca de"**: el dialogo de informacion (`AboutDialog`)
+  ahora tambien muestra una linea de copyright con el nombre del autor y
+  el año actual (calculado automaticamente).
+- **Aviso "Elegir plantilla" al crear un proyecto**: despues de escribir el
+  nombre del proyecto nuevo, antes de abrir el explorador de archivos, se
+  muestra un aviso explicando que el PDF que hay que elegir es la
+  *plantilla* del dossier (caratula + indice + paginas separadoras con
+  bookmarks), no un documento cualquiera. Antes se abria el explorador
+  directamente sin explicar que se esperaba seleccionar ahi.
 
 ## Roadmap / Fase 4
 

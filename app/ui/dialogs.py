@@ -3,6 +3,7 @@ nueva subseccion y vista previa de PDF.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -66,6 +67,12 @@ class AboutDialog(QDialog):
         author_label.setStyleSheet("font-weight: 600; font-size: 11pt;")
         layout.addWidget(author_label)
         layout.addWidget(QLabel(APP_AUTHOR_COUNTRY))
+
+        layout.addWidget(QLabel(""))
+        copyright_label = QLabel(f"© {datetime.now().year} {APP_AUTHOR_NAME}. Todos los derechos reservados.")
+        copyright_label.setStyleSheet("color: palette(mid); font-size: 9pt;")
+        copyright_label.setWordWrap(True)
+        layout.addWidget(copyright_label)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok)
         buttons.accepted.connect(self.accept)
