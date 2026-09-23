@@ -371,9 +371,10 @@ def test_generate_with_frequent_flush_produces_identical_result(populated_projec
 def test_flattened_document_backup_is_renamed_with_start_page(populated_project, tmp_path):
     """Los archivos con firma que se aplanan deben quedar, al terminar la
     generacion, con el prefijo 'pag {N}_' (N = pagina donde el documento
-    empieza en el dossier final) tanto en su copia de respaldo
-    (00_ORIGINALES_FIRMADOS/) como en su version aplanada
-    (01_DOCUMENTOS_PROCESADOS/).
+    empieza en el dossier final) en su copia de respaldo
+    (00_ORIGINALES_FIRMADOS/). La version aplanada
+    (01_DOCUMENTOS_PROCESADOS/) NO se renombra: debe conservar exactamente
+    el mismo nombre que el archivo original.
     """
     project, dyn = populated_project
     sec_1_1 = _find(project.sections, "1.1")
@@ -392,7 +393,7 @@ def test_flattened_document_backup_is_renamed_with_start_page(populated_project,
     assert target_doc.name in Path(target_doc.backup_path).name
 
     assert target_doc.flattened_path is not None
-    assert Path(target_doc.flattened_path).name.startswith("pag 5_")
+    assert Path(target_doc.flattened_path).name == target_doc.name
     assert Path(target_doc.flattened_path).exists()
 
     manifest = json.loads(
@@ -401,6 +402,34 @@ def test_flattened_document_backup_is_renamed_with_start_page(populated_project,
     manifest_entry = next(d for d in manifest["documents"] if d["name"] == target_doc.name)
     assert manifest_entry["backup_path"] == target_doc.backup_path
     assert manifest_entry["flattened_path"] == target_doc.flattened_path
+
+
+def test_flattened_document_backup_renamed_again_after_second_run(populated_project, tmp_path):
+    """Regresion: en Windows, path.rename() falla si el destino ya existe.
+    Antes de este fix, generar dos veces seguidas sobre la misma carpeta de
+    salida dejaba el backup de la 2da corrida SIN el prefijo 'pag N_'
+    porque el rename fallaba silenciosamente (el archivo de la 1ra corrida
+    ya ocupaba ese nombre). Ahora debe sobrescribirlo correctamente.
+    """
+    project, dyn = populated_project
+    sec_1_1 = _find(project.sections, "1.1")
+    target_doc = sec_1_1.documents[0]
+    target_doc.signature_treatment = SignatureTreatment.FLATTEN
+
+    builder = DossierBuilder(project)
+    builder.generate(str(tmp_path))
+    assert Path(target_doc.backup_path).name.startswith("pag 5_")
+
+    # 2da corrida sobre la misma carpeta de salida: no debe haber quedado
+    # ningun backup sin el prefijo de pagina.
+    builder2 = DossierBuilder(project)
+    builder2.generate(str(tmp_path))
+    assert Path(target_doc.backup_path).name.startswith("pag 5_")
+    assert Path(target_doc.backup_path).exists()
+
+    backup_dir = tmp_path / "Proyecto integracion" / "00_ORIGINALES_FIRMADOS"
+    unprefixed = [p for p in backup_dir.iterdir() if p.name == target_doc.name]
+    assert unprefixed == []
 
 
 def test_generate_with_individual_document_bookmarks(populated_project, tmp_path):

@@ -99,6 +99,14 @@ class Project:
 
     schema_version: int = 1
 
+    # Control de versiones/generaciones: cuantas veces se genero el dossier
+    # final de este proyecto, y el nombre/fecha de la ultima vez, para poder
+    # ofrecer "mantener el mismo nombre" en generaciones siguientes y dejar
+    # trazabilidad de revisiones en el manifest/reporte.
+    generation_count: int = 0
+    last_output_filename: str = ""
+    last_generated_at: str = ""
+
     def touch(self) -> None:
         self.modified_at = _now_iso()
 
@@ -127,6 +135,9 @@ class Project:
             "sections": [s.to_dict() for s in self.sections],
             "created_at": self.created_at,
             "modified_at": self.modified_at,
+            "generation_count": self.generation_count,
+            "last_output_filename": self.last_output_filename,
+            "last_generated_at": self.last_generated_at,
         }
 
     @classmethod
@@ -142,4 +153,7 @@ class Project:
             created_at=data.get("created_at", _now_iso()),
             modified_at=data.get("modified_at", _now_iso()),
             schema_version=data.get("schema_version", 1),
+            generation_count=data.get("generation_count", 0),
+            last_output_filename=data.get("last_output_filename", ""),
+            last_generated_at=data.get("last_generated_at", ""),
         )

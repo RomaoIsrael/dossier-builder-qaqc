@@ -54,6 +54,7 @@ class GenerationResult:
     sha256_final: str
     had_warnings: bool
     validation: ValidationReport = field(repr=False, default=None)
+    generation_number: int = 1
 
 
 @dataclass
@@ -371,13 +372,30 @@ class DossierBuilder:
         # aplica, ya termino), asi que el renombrado se hace al final.
         self._rename_signed_originals_with_page_numbers(all_docs, document_page_position)
 
+        # -- 5c. Control de versiones: registrar esta generacion ------------
+        # Se cuenta como generacion exitosa recien aqui, porque todo lo
+        # anterior (ensamblado, guardado del PDF final) ya se completo sin
+        # errores. last_output_filename permite que la UI ofrezca "mantener
+        # el mismo nombre" en la siguiente generacion.
+        self.project.generation_count += 1
+        self.project.last_output_filename = output_path.name
+        self.project.last_generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        generation_number = self.project.generation_count
+
         # -- 6. Manifest + reporte ------------------------------------------
         sha_final = sha256_file(output_path)
         final_page_count = pdf_engine.get_page_count(str(output_path))
 
         manifest_path = dirs["reports"] / "manifest.json"
         self._write_manifest(
-            manifest_path, output_path, sha_final, final_page_count, flattened_count, validation, document_page_position
+            manifest_path,
+            output_path,
+            sha_final,
+            final_page_count,
+            flattened_count,
+            validation,
+            document_page_position,
+            generation_number,
         )
 
         report_path = dirs["reports"] / "Reporte_Generacion.pdf"
@@ -390,6 +408,7 @@ class DossierBuilder:
             flattened_count,
             validation,
             document_page_position,
+            generation_number,
         )
         tick("Reporte generado")
 
@@ -411,6 +430,7 @@ class DossierBuilder:
             sha256_final=sha_final,
             had_warnings=bool(validation.warnings),
             validation=validation,
+            generation_number=generation_number,
         )
 
     # ------------------------------------------------------------------
@@ -583,7 +603,10 @@ class DossierBuilder:
                 shutil.copy2(source, backup_path)
             doc.backup_path = str(backup_path)
 
-        flat_name = f"{safe_filename(Path(doc.name).stem)}__flat.pdf"
+        # El documento procesado (aplanado) conserva el nombre original tal
+        # cual, sin sufijos ni prefijos: solo cambia su contenido (paginas
+        # rasterizadas), no su identidad de archivo.
+        flat_name = safe_filename(doc.name)
         flat_path = dirs["processed"] / flat_name
         try:
             flatten_pdf(
@@ -610,12 +633,17 @@ class DossierBuilder:
         all_docs: list[tuple[SectionNode, DocumentItem]],
         document_page_position: dict[str, int],
     ) -> None:
-        """Renombra la copia de respaldo (00_ORIGINALES_FIRMADOS/) y la
-        version aplanada (01_DOCUMENTOS_PROCESADOS/) de cada documento con
-        firma, anteponiendo la pagina donde termino en el dossier final:
-        ``pag {N}_{nombre_original}.pdf``. Solo puede hacerse aqui, una vez
-        terminado el ensamblado (incluido el indice automatico si aplica),
-        que es cuando se conoce la pagina real de cada documento.
+        """Renombra la copia de respaldo (00_ORIGINALES_FIRMADOS/) de cada
+        documento con firma, anteponiendo la pagina donde termino en el
+        dossier final: ``pag {N}_{nombre_original}.pdf``. Solo puede
+        hacerse aqui, una vez terminado el ensamblado (incluido el indice
+        automatico si aplica), que es cuando se conoce la pagina real de
+        cada documento.
+
+        La version aplanada de 01_DOCUMENTOS_PROCESADOS/ NO se renombra:
+        debe conservar exactamente el mismo nombre que el archivo original,
+        para que sea facil identificarla como "la misma" sin tener que
+        interpretar un prefijo.
         """
         for _section, doc in all_docs:
             start_page = document_page_position.get(doc.id)
@@ -625,8 +653,6 @@ class DossierBuilder:
 
             if doc.backup_path:
                 doc.backup_path = self._rename_with_page_prefix(doc.backup_path, page_number)
-            if doc.flattened_path:
-                doc.flattened_path = self._rename_with_page_prefix(doc.flattened_path, page_number)
 
     def _rename_with_page_prefix(self, path_str: str, page_number: int) -> str:
         path = Path(path_str)
@@ -637,7 +663,13 @@ class DossierBuilder:
             return path_str
         new_path = path.with_name(new_name)
         try:
-            path.rename(new_path)
+            # path.replace() (os.replace) sobrescribe el destino si ya existe,
+            # a diferencia de path.rename() (os.rename), que en Windows falla
+            # con "el archivo ya existe" si el destino esta ocupado. Eso
+            # pasaba en la 2da corrida en adelante: el archivo "pag N_..."
+            # de una corrida anterior ya estaba ahi, el rename fallaba, se
+            # atrapaba el error y el backup quedaba sin su prefijo de pagina.
+            path.replace(new_path)
             return str(new_path)
         except OSError as exc:
             logger.warning("No se pudo renombrar '%s' con su pagina de inicio: %s", path, exc)
@@ -698,6 +730,7 @@ class DossierBuilder:
         flattened_count: int,
         validation: ValidationReport,
         document_page_position: dict[str, int],
+        generation_number: int,
     ) -> None:
         documents = []
         for section, doc in self._iter_all_documents():
@@ -722,6 +755,7 @@ class DossierBuilder:
         manifest = {
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "generated_by": getpass.getuser(),
+            "generation_number": generation_number,
             "project_name": self.project.name,
             "project_id": self.project.id,
             "template_path": self.project.template_path,
@@ -745,6 +779,7 @@ class DossierBuilder:
         flattened_count: int,
         validation: ValidationReport,
         document_page_position: dict[str, int],
+        generation_number: int,
     ) -> None:
         doc = fitz.open()
         page = doc.new_page(width=595, height=842)  # A4
@@ -752,6 +787,7 @@ class DossierBuilder:
             "REPORTE DE GENERACION - DOSSIER BUILDER QA/QC",
             "",
             f"Proyecto: {self.project.name}",
+            f"Generacion / revision N.° {generation_number} de este proyecto",
             f"Archivo generado: {output_path.name}",
             f"Fecha/hora: {datetime.now(timezone.utc).isoformat(timespec='seconds')} UTC",
             f"Usuario: {getpass.getuser()}",

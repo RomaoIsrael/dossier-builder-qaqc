@@ -233,20 +233,26 @@ plataformas de ventana) y `--collect-submodules fitz`.
                                  (N = pagina donde ese documento empieza en el
                                  dossier final; ver mas abajo)
     01_DOCUMENTOS_PROCESADOS/   Versiones aplanadas (rasterizadas) de esos PDF,
-                                 con el mismo prefijo "pag {N}_"
+                                 con el MISMO nombre que el archivo original
+                                 (sin prefijo ni sufijo: solo cambia el
+                                 contenido, no el nombre del archivo)
     02_DOSSIER_FINAL/           El PDF final del dossier
     03_REPORTES/
         manifest.json            SHA-256 de cada archivo, totales, avisos,
-                                 pagina de inicio y rutas (backup/aplanado)
-                                 de cada documento
+                                 numero de generacion, pagina de inicio y
+                                 rutas (backup/aplanado) de cada documento
         Reporte_Generacion.pdf   Reporte legible de la generacion, incluye
-                                 el listado "pag. N  NOMBRE_ARCHIVO.pdf" de
+                                 el numero de generacion/revision y el
+                                 listado "pag. N  NOMBRE_ARCHIVO.pdf" de
                                  todos los documentos originales
 ```
 
 El prefijo `pag {N}_` solo puede calcularse **despues** de armar el dossier
 completo (recien ahi se sabe en que pagina termino cada documento), asi que
-el renombrado ocurre como ultimo paso de la generacion, no al aplanar.
+el renombrado ocurre como ultimo paso de la generacion, no al aplanar. Solo
+se aplica a la copia de respaldo de `00_ORIGINALES_FIRMADOS/`: la version
+aplanada de `01_DOCUMENTOS_PROCESADOS/` siempre conserva el nombre original
+tal cual.
 
 ## Proyecto de ejemplo
 
@@ -379,12 +385,13 @@ página exacta tras las inserciones.
     individuales en el índice" (en Configuración, junto a "Generar índice
     automático"), el índice automático lista cada documento anidado bajo su
     sección, con su página de inicio.
-  - **Archivos originales firmados renombrados**: las copias en
-    `00_ORIGINALES_FIRMADOS/` y `01_DOCUMENTOS_PROCESADOS/` quedan como
-    `pag {N}_{nombre_original}.pdf` (ej. `pag 56_Certificado_API.pdf`),
-    calculado después de armar el dossier completo (`DossierBuilder`
-    `_rename_signed_originals_with_page_numbers`). `manifest.json` refleja
-    las rutas ya renombradas en `backup_path` y `flattened_path`.
+  - **Archivos originales firmados renombrados**: la copia de respaldo en
+    `00_ORIGINALES_FIRMADOS/` queda como `pag {N}_{nombre_original}.pdf`
+    (ej. `pag 56_Certificado_API.pdf`), calculado después de armar el
+    dossier completo (`DossierBuilder._rename_signed_originals_with_page_numbers`).
+    La versión aplanada en `01_DOCUMENTOS_PROCESADOS/` **no** se renombra:
+    conserva exactamente el mismo nombre que el archivo original.
+    `manifest.json` refleja ambas rutas en `backup_path` y `flattened_path`.
 - **Fix: no inventar numeración para bookmarks sin número** (ej. "CONTENIDO",
   típicamente la raíz/matriz del índice de la plantilla, sin numeración
   propia). Antes, `renumber_sections()` — que corre cada vez que se agrega,
@@ -446,6 +453,30 @@ página exacta tras las inserciones.
   agregar o mover documentos, cambiar configuracion, etc.). Al cerrar la
   ventana con cambios pendientes, pregunta si se desean guardar, descartar
   o cancelar el cierre, en vez de perderlos silenciosamente como antes.
+- **Documentos procesados con su nombre original**: la version aplanada en
+  `01_DOCUMENTOS_PROCESADOS/` ya no se renombra (antes quedaba como
+  `nombre__flat.pdf` y luego `pag {N}_nombre__flat.pdf`); ahora conserva
+  exactamente el mismo nombre de archivo que el documento original. Solo la
+  copia de respaldo en `00_ORIGINALES_FIRMADOS/` sigue llevando el prefijo
+  `pag {N}_`.
+- **Fix: renombrado de originales firmados que fallaba en la 2da corrida**
+  (y siguientes) sobre la misma carpeta de salida. En Windows,
+  `Path.rename()` falla si el archivo destino ya existe (a diferencia de
+  Linux/Mac); como el archivo `pag {N}_...` de una corrida anterior ya
+  ocupaba ese nombre, el renombrado de la nueva corrida fallaba
+  silenciosamente y el backup quedaba sin el prefijo de pagina. Cambiado a
+  `Path.replace()`, que sobrescribe el destino de forma segura en
+  cualquier sistema operativo.
+- **Control de versiones/generaciones del dossier**: el proyecto ahora
+  recuerda cuantas veces se genero (`generation_count`) y con que nombre
+  se guardo la ultima vez (`last_output_filename`). Al generar un dossier
+  que ya se genero antes, la aplicacion pregunta si se desea **mantener el
+  mismo nombre** de la ultima generacion o **cambiarlo** (en vez de
+  ofrecer directamente un campo de texto en blanco, como en la primera
+  generacion). El numero de generacion/revision queda registrado en
+  `manifest.json` (`generation_number`) y en `Reporte_Generacion.pdf`
+  ("Generacion / revision N.° X de este proyecto"), ademas del historial
+  ya existente en el indice SQLite local (`DatabaseService.list_generations`).
 
 ## Roadmap / Fase 4
 

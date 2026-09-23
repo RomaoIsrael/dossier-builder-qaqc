@@ -49,3 +49,18 @@ def test_project_round_trip_preserves_structure():
     assert restored.settings.flatten_dpi == 200
     assert restored.total_documents() == 1
     assert restored.find_section(section.id) is not None
+
+
+def test_project_round_trip_preserves_generation_tracking():
+    project = Project(name="Proyecto Y")
+    assert project.generation_count == 0
+    assert project.last_output_filename == ""
+
+    project.generation_count = 3
+    project.last_output_filename = "CODIGO-POZO-TIPO-2.pdf"
+    project.last_generated_at = "2026-09-23T10:00:00+00:00"
+
+    restored = Project.from_dict(project.to_dict())
+    assert restored.generation_count == 3
+    assert restored.last_output_filename == "CODIGO-POZO-TIPO-2.pdf"
+    assert restored.last_generated_at == "2026-09-23T10:00:00+00:00"

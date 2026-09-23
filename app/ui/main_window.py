@@ -973,14 +973,40 @@ class MainWindow(QMainWindow):
         suggested_name = render_naming_pattern(
             self.project.settings.output_naming_pattern, self.project.metadata.as_naming_context()
         )
-        output_filename, ok = QInputDialog.getText(
-            self,
-            "Nombre del dossier",
-            "Nombre o codigo con el que se guardara el archivo generado:",
-            text=suggested_name,
-        )
-        if not ok or not output_filename.strip():
-            return
+
+        output_filename: Optional[str] = None
+        if self.project.generation_count > 0 and self.project.last_output_filename:
+            # Ya se genero antes: preguntar si se mantiene el mismo nombre o
+            # se cambia, en vez de solo ofrecer un campo de texto en blanco.
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Question)
+            box.setWindowTitle("Nombre del dossier")
+            box.setText(
+                f"Este proyecto ya se genero antes (generacion N.° {self.project.generation_count}), "
+                f"la ultima vez como:\n\n\"{self.project.last_output_filename}\"\n\n"
+                "Desea mantener ese mismo nombre para esta nueva generacion, o cambiarlo?"
+            )
+            keep_btn = box.addButton("Mantener nombre", QMessageBox.AcceptRole)
+            box.addButton("Cambiar nombre", QMessageBox.ActionRole)
+            cancel_btn = box.addButton("Cancelar", QMessageBox.RejectRole)
+            box.setDefaultButton(keep_btn)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked == cancel_btn:
+                return
+            if clicked == keep_btn:
+                output_filename = self.project.last_output_filename
+            # "Cambiar nombre" (o cualquier otro caso): cae al dialogo de texto de abajo.
+
+        if output_filename is None:
+            output_filename, ok = QInputDialog.getText(
+                self,
+                "Nombre del dossier",
+                "Nombre o codigo con el que se guardara el archivo generado:",
+                text=suggested_name,
+            )
+            if not ok or not output_filename.strip():
+                return
 
         self._progress_dialog = QProgressDialog("Preparando generacion...", "Cancelar", 0, 100, self)
         self._progress_dialog.setWindowTitle("Generando dossier")
@@ -1012,6 +1038,12 @@ class MainWindow(QMainWindow):
             self._progress_dialog.close()
         self.generate_action.setEnabled(True)
 
+        # DossierBuilder.generate() ya actualizo generation_count /
+        # last_output_filename / last_generated_at en self.project (mismo
+        # objeto usado por el hilo de generacion); solo falta marcar el
+        # proyecto como modificado para que se ofrezca guardar ese estado.
+        self._touch_project()
+
         self.database.record_generation(
             project_id=self.project.id,
             output_path=result.output_pdf_path,
@@ -1026,7 +1058,8 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.information(
             self,
             "Dossier generado",
-            f"Dossier generado correctamente:\n{result.output_pdf_path}\n\n"
+            f"Dossier generado correctamente (generacion N.° {result.generation_number} de este proyecto):\n"
+            f"{result.output_pdf_path}\n\n"
             f"Paginas: {result.total_pages}\n"
             f"Documentos: {result.total_documents}\n"
             f"Documentos aplanados (firma): {result.flattened_count}\n"
