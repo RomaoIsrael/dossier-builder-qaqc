@@ -592,6 +592,7 @@ class DossierBuilder:
                 FlattenOptions(
                     dpi=self.project.settings.flatten_dpi,
                     image_format=self.project.settings.flatten_image_format,
+                    jpeg_quality=self.project.settings.flatten_jpeg_quality,
                 ),
             )
         except FlattenError as exc:

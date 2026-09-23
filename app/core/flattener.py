@@ -23,14 +23,18 @@ from app.services.logger import get_logger
 
 logger = get_logger("flattener")
 
-_VALID_DPI = (150, 200, 300, 400)
+_VALID_DPI = (150, 200, 300, 450, 600)
 
 
 @dataclass
 class FlattenOptions:
-    dpi: int = 300
+    # DPI y calidad JPEG por defecto subidos (antes 300/90) para que las
+    # firmas e imagenes aplanadas se vean mas nitidas dentro del dossier
+    # final; 450 DPI es un 50% mas de resolucion lineal que el valor
+    # anterior de 300.
+    dpi: int = 450
     image_format: str = "jpeg"  # "jpeg" | "png"
-    jpeg_quality: int = 90
+    jpeg_quality: int = 95
 
 
 class FlattenError(Exception):

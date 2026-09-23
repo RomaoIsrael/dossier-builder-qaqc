@@ -58,8 +58,9 @@ class ProjectMetadata:
 class ProjectSettings:
     """Configuracion de procesamiento asociada al proyecto."""
 
-    flatten_dpi: int = 300
+    flatten_dpi: int = 450
     flatten_image_format: str = "jpeg"  # "jpeg" | "png"
+    flatten_jpeg_quality: int = 95
     signature_mode: str = "auto"  # "auto" | "ask" | "never"
     output_naming_pattern: str = "{codigo}-{pozo}-{tipo}-{revision}"
     output_dir: str = ""

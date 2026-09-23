@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -37,6 +38,38 @@ from app.core.validator import Severity, ValidationReport
 from app.models.project_model import ProjectMetadata, ProjectSettings
 from app.models.section_model import SectionNode
 from app.services.settings import AppSettings
+
+APP_VERSION = "0.1.0"
+APP_AUTHOR_NAME = "Romao Israel Landázuri Balseca"
+APP_AUTHOR_COUNTRY = "Ecuador"
+
+
+class AboutDialog(QDialog):
+    """Panel de informacion ('Acerca de'): quien elaboro el programa y version."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Acerca de Dossier Builder QA/QC")
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+
+        title = QLabel("Dossier Builder QA/QC")
+        title.setStyleSheet("font-weight: 700; font-size: 14pt;")
+        layout.addWidget(title)
+        layout.addWidget(QLabel(f"Version {APP_VERSION}"))
+
+        layout.addWidget(QLabel(""))
+
+        layout.addWidget(QLabel("Elaborado por:"))
+        author_label = QLabel(APP_AUTHOR_NAME)
+        author_label.setStyleSheet("font-weight: 600; font-size: 11pt;")
+        layout.addWidget(author_label)
+        layout.addWidget(QLabel(APP_AUTHOR_COUNTRY))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
 
 
 class MetadataDialog(QDialog):
@@ -93,7 +126,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
 
         self.dpi_combo = QComboBox()
-        self.dpi_combo.addItems(["150", "200", "300", "400"])
+        self.dpi_combo.addItems(["150", "200", "300", "450", "600"])
         self.dpi_combo.setCurrentText(str(settings.flatten_dpi))
         form.addRow("DPI de aplanado", self.dpi_combo)
 
@@ -101,6 +134,12 @@ class SettingsDialog(QDialog):
         self.format_combo.addItems(["jpeg", "png"])
         self.format_combo.setCurrentText(settings.flatten_image_format)
         form.addRow("Formato de imagen", self.format_combo)
+
+        self.jpeg_quality_spin = QSpinBox()
+        self.jpeg_quality_spin.setRange(70, 100)
+        self.jpeg_quality_spin.setValue(settings.flatten_jpeg_quality)
+        self.jpeg_quality_spin.setSuffix(" %")
+        form.addRow("Calidad JPEG (aplanado)", self.jpeg_quality_spin)
 
         self.signature_mode_combo = QComboBox()
         self.signature_mode_combo.addItem("Automatico (detectar firmas)", "auto")
@@ -141,6 +180,15 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel("Variables disponibles: {codigo} {pozo} {wo} {tipo} {revision} {contrato} {bloque}"))
         layout.addWidget(
             QLabel(
+                "DPI y calidad JPEG mas altos hacen que las firmas e imagenes aplanadas se vean mas "
+                "nitidas dentro del dossier final, a cambio de un archivo de salida mas pesado y un "
+                "aplanado un poco mas lento. 450 DPI / 95% es un buen punto de partida para firmas; "
+                "para documentos muy grandes (cientos de paginas escaneadas) puede convenir bajar a "
+                "300 DPI si el tamano final del PDF es un problema."
+            )
+        )
+        layout.addWidget(
+            QLabel(
                 "'Crear un bookmark por cada documento' agrega, al arbol de bookmarks del PDF final, "
                 "una entrada por cada documento insertado (para poder saltar directo a el desde el "
                 "panel de marcadores del lector de PDF), ademas de las de seccion. No crea ninguna "
@@ -158,6 +206,7 @@ class SettingsDialog(QDialog):
     def apply_to(self, settings: ProjectSettings) -> ProjectSettings:
         settings.flatten_dpi = int(self.dpi_combo.currentText())
         settings.flatten_image_format = self.format_combo.currentText()
+        settings.flatten_jpeg_quality = self.jpeg_quality_spin.value()
         settings.signature_mode = self.signature_mode_combo.currentData()
         settings.output_naming_pattern = self.naming_edit.text() or settings.output_naming_pattern
         settings.output_dir = self.output_dir_edit.text()
@@ -187,9 +236,15 @@ class PreferencesDialog(QDialog):
         form.addRow("Tema", self.theme_combo)
 
         self.dpi_combo = QComboBox()
-        self.dpi_combo.addItems(["150", "200", "300", "400"])
+        self.dpi_combo.addItems(["150", "200", "300", "450", "600"])
         self.dpi_combo.setCurrentText(str(settings.default_flatten_dpi))
         form.addRow("DPI de aplanado por defecto", self.dpi_combo)
+
+        self.jpeg_quality_spin = QSpinBox()
+        self.jpeg_quality_spin.setRange(70, 100)
+        self.jpeg_quality_spin.setValue(settings.default_flatten_jpeg_quality)
+        self.jpeg_quality_spin.setSuffix(" %")
+        form.addRow("Calidad JPEG por defecto", self.jpeg_quality_spin)
 
         self.naming_edit = QLineEdit(settings.default_naming_pattern)
         form.addRow("Patron de nombre por defecto", self.naming_edit)
@@ -208,6 +263,7 @@ class PreferencesDialog(QDialog):
     def apply_to(self, settings: AppSettings) -> AppSettings:
         settings.theme = self.theme_combo.currentData()
         settings.default_flatten_dpi = int(self.dpi_combo.currentText())
+        settings.default_flatten_jpeg_quality = self.jpeg_quality_spin.value()
         settings.default_naming_pattern = self.naming_edit.text() or settings.default_naming_pattern
         settings.default_output_dir = self.output_dir_edit.text()
         return settings

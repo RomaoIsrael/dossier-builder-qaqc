@@ -430,6 +430,22 @@ página exacta tras las inserciones.
   como el árbol de secciones responden ahora a la tecla Supr (o Retroceso)
   con la selección activa, sin necesidad de usar el botón o el menú
   contextual.
+- **Mayor calidad de aplanado de firmas**: DPI por defecto subido de 300 a
+  450 (50% mas de resolucion lineal) y calidad JPEG de 90% a 95%, tanto en
+  `Configuracion` del proyecto como en `Preferencias` globales (con
+  opciones de hasta 600 DPI para casos exigentes). Ahora tambien se puede
+  ajustar la calidad JPEG desde la interfaz (antes estaba fija en el
+  codigo). Un DPI mas alto produce firmas e imagenes visiblemente mas
+  nitidas dentro del dossier final, a cambio de un PDF de salida algo mas
+  pesado.
+- **Panel "Acerca de"**: nuevo boton con icono de informacion (i) en la
+  barra de herramientas que muestra el nombre de quien elaboro el programa
+  y la version de la aplicacion (`AboutDialog` en `app/ui/dialogs.py`).
+- **Confirmar guardado al cerrar**: la aplicacion ahora recuerda si hay
+  cambios sin guardar en el proyecto actual (crear/editar secciones,
+  agregar o mover documentos, cambiar configuracion, etc.). Al cerrar la
+  ventana con cambios pendientes, pregunta si se desean guardar, descartar
+  o cancelar el cierre, en vez de perderlos silenciosamente como antes.
 
 ## Roadmap / Fase 4
 
@@ -444,8 +460,6 @@ No implementado todavía, pendiente para una siguiente iteración:
 
 ## Limitaciones conocidas del MVP
 
-- No hay seguimiento de "cambios sin guardar" (dirty state): cerrar la
-  aplicación no pregunta si se quiere guardar el proyecto.
 - La vista previa es por documento individual, no del dossier completo ya
   ensamblado.
 - El reporte de generación en PDF es un resumen simple (texto), no incluye

@@ -18,8 +18,9 @@ class AppSettings:
     theme: str = "light"  # "light" | "dark"
 
     # PDF / rasterizacion
-    default_flatten_dpi: int = 300
+    default_flatten_dpi: int = 450
     default_flatten_image_format: str = "jpeg"
+    default_flatten_jpeg_quality: int = 95
     optimize_output: bool = True
 
     # Firmas
