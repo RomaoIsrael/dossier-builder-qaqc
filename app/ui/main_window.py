@@ -50,6 +50,7 @@ from app.ui.dialogs import (
     PdfPreviewDialog,
     PreferencesDialog,
     SettingsDialog,
+    UserManualDialog,
     ValidationResultsDialog,
     flatten_section_options,
 )
@@ -207,6 +208,7 @@ class MainWindow(QMainWindow):
         add_action(toolbar_top, "Preferencias", self.edit_preferences, QStyle.SP_ComputerIcon)
         add_action(toolbar_top, "Historial de cambios", self.show_audit_log, QStyle.SP_FileDialogListView)
         toolbar_top.addSeparator()
+        add_action(toolbar_top, "Manual de Usuario", self.show_user_manual, QStyle.SP_DialogHelpButton)
         add_action(toolbar_top, "Acerca de", self.show_about_dialog, QStyle.SP_MessageBoxInformation)
 
         # Fila 2: flujo de trabajo del dossier (distribuir, revisar, generar).
@@ -421,6 +423,9 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self) -> None:
         AboutDialog(self).exec()
+
+    def show_user_manual(self) -> None:
+        UserManualDialog(self).exec()
 
     def show_audit_log(self) -> None:
         if not self._require_project():

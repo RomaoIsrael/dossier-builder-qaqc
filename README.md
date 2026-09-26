@@ -500,6 +500,13 @@ página exacta tras las inserciones.
   reciente primero. Asi, si dos personas comparten el mismo proyecto desde
   computadoras distintas, cada una queda identificada por sus propios
   cambios, no solo la fecha de la ultima modificacion.
+- **Manual de Usuario integrado**: nuevo boton **"Manual de Usuario"** en la
+  barra de herramientas, junto a "Acerca de" (`UserManualDialog`). Abre una
+  guia paso a paso, dentro de la misma aplicacion, que explica que hace cada
+  boton, cada menu de clic derecho y cada dialogo (barra de herramientas,
+  panel de secciones, panel de documentos, metadatos, configuracion,
+  preferencias, historial de cambios y el flujo completo de generacion del
+  dossier), sin necesidad de salir del programa ni leer este README.
 
 ## Roadmap / Fase 4
 
