@@ -107,8 +107,24 @@ class Project:
     last_output_filename: str = ""
     last_generated_at: str = ""
 
+    # Historial de cambios: quien hizo que y cuando (guardar, agregar/mover/
+    # eliminar documentos o secciones, generar el dossier, etc.). Viaja con
+    # el archivo .dossierproj, asi que si otra persona abre el proyecto en
+    # otra computadora sus acciones tambien quedan registradas aqui con su
+    # usuario de sistema operativo.
+    audit_log: list[dict] = field(default_factory=list)
+
+    _MAX_AUDIT_LOG_ENTRIES = 500
+
     def touch(self) -> None:
         self.modified_at = _now_iso()
+
+    def log_action(self, user: str, action: str, details: str = "") -> None:
+        self.audit_log.append(
+            {"timestamp": _now_iso(), "user": user, "action": action, "details": details}
+        )
+        if len(self.audit_log) > self._MAX_AUDIT_LOG_ENTRIES:
+            self.audit_log = self.audit_log[-self._MAX_AUDIT_LOG_ENTRIES :]
 
     def iter_all_sections(self):
         for root in self.sections:
@@ -138,6 +154,7 @@ class Project:
             "generation_count": self.generation_count,
             "last_output_filename": self.last_output_filename,
             "last_generated_at": self.last_generated_at,
+            "audit_log": self.audit_log,
         }
 
     @classmethod
@@ -156,4 +173,5 @@ class Project:
             generation_count=data.get("generation_count", 0),
             last_output_filename=data.get("last_output_filename", ""),
             last_generated_at=data.get("last_generated_at", ""),
+            audit_log=data.get("audit_log", []),
         )

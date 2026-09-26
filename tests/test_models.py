@@ -64,3 +64,30 @@ def test_project_round_trip_preserves_generation_tracking():
     assert restored.generation_count == 3
     assert restored.last_output_filename == "CODIGO-POZO-TIPO-2.pdf"
     assert restored.last_generated_at == "2026-09-23T10:00:00+00:00"
+
+
+def test_audit_log_records_user_action_and_survives_round_trip():
+    project = Project(name="Proyecto Z")
+    assert project.audit_log == []
+
+    project.log_action("jgarcia", "Agregar documentos", "2 documento(s) en '1.1 Certificados'")
+    project.log_action("rlandazuri", "Guardar proyecto", "C:/pozo1.dossierproj")
+
+    assert len(project.audit_log) == 2
+    assert project.audit_log[0]["user"] == "jgarcia"
+    assert project.audit_log[0]["action"] == "Agregar documentos"
+    assert project.audit_log[1]["user"] == "rlandazuri"
+    assert "timestamp" in project.audit_log[0]
+
+    restored = Project.from_dict(project.to_dict())
+    assert restored.audit_log == project.audit_log
+
+
+def test_audit_log_caps_at_max_entries():
+    project = Project(name="Proyecto W")
+    for i in range(project._MAX_AUDIT_LOG_ENTRIES + 10):
+        project.log_action("user", f"accion-{i}")
+
+    assert len(project.audit_log) == project._MAX_AUDIT_LOG_ENTRIES
+    # se conservan las mas recientes (se descartan las mas viejas)
+    assert project.audit_log[-1]["action"] == f"accion-{project._MAX_AUDIT_LOG_ENTRIES + 9}"

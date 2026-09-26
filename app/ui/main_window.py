@@ -1,6 +1,7 @@
 """Ventana principal de Dossier Builder QA/QC."""
 from __future__ import annotations
 
+import getpass
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,7 @@ from app.services.logger import get_logger
 from app.services.settings import SettingsService
 from app.ui.dialogs import (
     AboutDialog,
+    AuditLogDialog,
     AutoDistributeDialog,
     DossierOutlinePreviewDialog,
     DossierThumbnailPreviewDialog,
@@ -116,8 +118,17 @@ class MainWindow(QMainWindow):
 
         self._refresh_ui()
 
-    def _touch_project(self) -> None:
-        """Marca el proyecto como modificado (fecha + estado 'sin guardar').
+    def _log_action(self, action: str, details: str = "") -> None:
+        """Registra en el historial del proyecto quien (usuario de Windows)
+        hizo que accion, para poder saber que modifico cada persona que
+        haya abierto el proyecto, aunque sea desde otra computadora."""
+        if self.project is None:
+            return
+        self.project.log_action(getpass.getuser(), action, details)
+
+    def _touch_project(self, action: str = "", details: str = "") -> None:
+        """Marca el proyecto como modificado (fecha + estado 'sin guardar')
+        y, si se indica una accion, la agrega al historial de cambios.
 
         Se usa en vez de llamar directamente a ``self.project.touch()`` para
         que la ventana sepa, ademas, que hay cambios pendientes y pregunte
@@ -125,6 +136,8 @@ class MainWindow(QMainWindow):
         """
         self.project.touch()
         self._dirty = True
+        if action:
+            self._log_action(action, details)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - nombre Qt
         if self.project is not None and self._dirty:
@@ -192,6 +205,7 @@ class MainWindow(QMainWindow):
         add_action(toolbar_top, "Metadatos", self.edit_metadata, QStyle.SP_FileDialogInfoView)
         add_action(toolbar_top, "Configuracion", self.edit_settings, QStyle.SP_FileDialogDetailedView)
         add_action(toolbar_top, "Preferencias", self.edit_preferences, QStyle.SP_ComputerIcon)
+        add_action(toolbar_top, "Historial de cambios", self.show_audit_log, QStyle.SP_FileDialogListView)
         toolbar_top.addSeparator()
         add_action(toolbar_top, "Acerca de", self.show_about_dialog, QStyle.SP_MessageBoxInformation)
 
@@ -375,6 +389,7 @@ class MainWindow(QMainWindow):
         self.settings_service.add_recent_project(str(saved_path))
         self.statusBar().showMessage(f"Proyecto guardado en {saved_path}", 5000)
         self._dirty = False
+        self._log_action("Guardar proyecto", str(saved_path))
         self._refresh_ui()
 
     def edit_metadata(self) -> None:
@@ -383,7 +398,7 @@ class MainWindow(QMainWindow):
         dialog = MetadataDialog(self.project.metadata, self)
         if dialog.exec():
             self.project.metadata = dialog.result_metadata()
-            self._touch_project()
+            self._touch_project("Editar metadatos")
 
     def edit_settings(self) -> None:
         if not self._require_project():
@@ -391,7 +406,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.project.settings, self)
         if dialog.exec():
             self.project.settings = dialog.apply_to(self.project.settings)
-            self._touch_project()
+            self._touch_project("Editar configuracion")
 
     def edit_preferences(self) -> None:
         """Preferencias globales (tema, DPI/nombre/salida por defecto), no
@@ -406,6 +421,11 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self) -> None:
         AboutDialog(self).exec()
+
+    def show_audit_log(self) -> None:
+        if not self._require_project():
+            return
+        AuditLogDialog(self.project.audit_log, self).exec()
 
     # ------------------------------------------------------------------
     # Secciones
@@ -439,7 +459,8 @@ class MainWindow(QMainWindow):
         )
         parent.children.append(child)
         renumber_sections(self.project.sections)
-        self._touch_project()
+        parent_label = f"{parent.numbering} {parent.title}".strip()
+        self._touch_project("Agregar subseccion", f"'{name}' bajo '{parent_label}'")
         self._refresh_ui()
         self.tree.select_section(child.id)
 
@@ -482,7 +503,9 @@ class MainWindow(QMainWindow):
         container.remove(section)
 
         renumber_sections(self.project.sections)
-        self._touch_project()
+        self._touch_project(
+            "Eliminar seccion", f"'{label}' ({doc_count} documento(s), {child_count} subseccion(es))"
+        )
         self.current_section_id = None
         self._refresh_ui()
 
@@ -532,7 +555,8 @@ class MainWindow(QMainWindow):
             return
 
         self._add_paths_to_section(paths, section)
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Agregar documentos", f"{len(paths)} documento(s) en '{section_label}'")
         self._refresh_ui()
         self.tree.select_section(section.id)
 
@@ -554,7 +578,10 @@ class MainWindow(QMainWindow):
             return
 
         self._add_paths_to_section(pdf_paths, section)
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project(
+            "Agregar documentos (carpeta)", f"{len(pdf_paths)} documento(s) desde '{folder}' en '{section_label}'"
+        )
         self._refresh_ui()
         self.tree.select_section(section.id)
         self.statusBar().showMessage(f"{len(pdf_paths)} documento(s) agregado(s) desde la carpeta.", 5000)
@@ -571,7 +598,8 @@ class MainWindow(QMainWindow):
             )
             return
         count = self._add_paths_to_section(paths, section)
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Agregar documentos (arrastrar y soltar)", f"{count} documento(s) en '{section_label}'")
         self._refresh_ui()
         self.tree.select_section(section.id)
         self.statusBar().showMessage(f"{count} documento(s) agregado(s) por arrastrar y soltar.", 5000)
@@ -585,7 +613,8 @@ class MainWindow(QMainWindow):
         if section is None:
             return
         count = self._add_paths_to_section(paths, section)
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Agregar documentos (arrastrar y soltar)", f"{count} documento(s) en '{section_label}'")
         self._refresh_ui()
         self.tree.select_section(section.id)
         self.statusBar().showMessage(f"{count} documento(s) agregado(s) por arrastrar y soltar.", 5000)
@@ -625,7 +654,7 @@ class MainWindow(QMainWindow):
         if added_count == 0:
             return
 
-        self._touch_project()
+        self._touch_project("Distribuir documentos (auto)", f"{added_count} documento(s) distribuidos")
         self._refresh_ui()
         if touched_section_id:
             self.tree.select_section(touched_section_id)
@@ -710,7 +739,8 @@ class MainWindow(QMainWindow):
         for index, doc in enumerate(new_order):
             doc.order = index
         section.documents = new_order
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Reordenar documentos", f"Nuevo orden en '{section_label}'")
 
     def _move_selected(self, direction: int) -> None:
         section = self._current_section()
@@ -726,13 +756,16 @@ class MainWindow(QMainWindow):
         new_index = index + direction
         if not (0 <= new_index < len(section.documents)):
             return
+        moved_doc = section.documents[index]
         section.documents[index], section.documents[new_index] = (
             section.documents[new_index],
             section.documents[index],
         )
         for i, doc in enumerate(section.documents):
             doc.order = i
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        verb = "Subir" if direction < 0 else "Bajar"
+        self._touch_project(f"{verb} documento", f"'{moved_doc.name}' en '{section_label}'")
         self._refresh_document_list()
 
     def remove_selected_documents(self) -> None:
@@ -747,10 +780,14 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.Yes:
             return
+        removed_names = [d.name for d in section.documents if d.id in selected_ids]
         section.documents = [d for d in section.documents if d.id not in selected_ids]
         for i, doc in enumerate(section.documents):
             doc.order = i
-        self._touch_project()
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project(
+            "Eliminar documentos", f"{', '.join(removed_names)} de '{section_label}'"
+        )
         self._refresh_ui()
 
     def _move_or_copy_selected_documents(self, copy: bool) -> None:
@@ -803,10 +840,15 @@ class MainWindow(QMainWindow):
                 doc.order = len(target_section.documents)
                 target_section.documents.append(doc)
 
-        self._touch_project()
+        verb = "copiado(s)" if copy else "movido(s)"
+        doc_names = ", ".join(d.name for d in selected_docs)
+        source_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project(
+            "Copiar documentos" if copy else "Mover documentos",
+            f"{doc_names} de '{source_label}' a '{chosen_label}'",
+        )
         self._refresh_ui()
         self.tree.select_section(target_id)
-        verb = "copiado(s)" if copy else "movido(s)"
         self.statusBar().showMessage(f"{len(selected_docs)} documento(s) {verb} a '{chosen_label}'.", 5000)
 
     def _selected_document(self) -> Optional[DocumentItem]:
@@ -877,10 +919,20 @@ class MainWindow(QMainWindow):
                 "original firmado permanecera sin modificaciones.",
             )
 
+        treated_names = []
         for doc in section.documents:
             if doc.id in selected_ids:
                 doc.signature_treatment = value
-        self._touch_project()
+                treated_names.append(doc.name)
+        treatment_labels = {
+            SignatureTreatment.KEEP_ORIGINAL: "Conservar original",
+            SignatureTreatment.FLATTEN: "Aplanar",
+            SignatureTreatment.AUTO: "Automatico",
+        }
+        self._touch_project(
+            "Cambiar tratamiento de firma",
+            f"{', '.join(treated_names)} -> {treatment_labels.get(value, value.value)}",
+        )
         self._refresh_document_list()
 
     def _show_document_context_menu(self, pos) -> None:
@@ -946,8 +998,9 @@ class MainWindow(QMainWindow):
         new_title, ok = QInputDialog.getText(self, "Renombrar seccion", "Nuevo nombre:", text=section.title)
         if not ok or not new_title.strip():
             return
+        old_title = section.title
         section.title = new_title.strip()
-        self._touch_project()
+        self._touch_project("Renombrar seccion", f"'{old_title}' -> '{section.title}'")
         self._refresh_ui()
         self.tree.select_section(section.id)
 
@@ -1056,7 +1109,10 @@ class MainWindow(QMainWindow):
         # last_output_filename / last_generated_at en self.project (mismo
         # objeto usado por el hilo de generacion); solo falta marcar el
         # proyecto como modificado para que se ofrezca guardar ese estado.
-        self._touch_project()
+        self._touch_project(
+            "Generar dossier",
+            f"Generacion N.° {result.generation_number}: {Path(result.output_pdf_path).name}",
+        )
 
         self.database.record_generation(
             project_id=self.project.id,

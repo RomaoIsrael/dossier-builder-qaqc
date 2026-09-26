@@ -486,6 +486,20 @@ página exacta tras las inserciones.
   *plantilla* del dossier (caratula + indice + paginas separadoras con
   bookmarks), no un documento cualquiera. Antes se abria el explorador
   directamente sin explicar que se esperaba seleccionar ahi.
+- **Historial de cambios (quien modifico que)**: el proyecto ahora lleva
+  un registro (`audit_log`, dentro del propio `.dossierproj`, asi que viaja
+  con el proyecto a cualquier computadora) de cada accion que lo modifica:
+  guardar, agregar/eliminar/mover/copiar/reordenar documentos, agregar/
+  renombrar/eliminar secciones, cambiar tratamiento de firma, editar
+  metadatos o configuracion, y generar el dossier. Cada entrada guarda
+  fecha/hora, el **usuario de Windows** de quien hizo el cambio
+  (`getpass.getuser()`, automatico, sin que la persona escriba nada) y un
+  detalle especifico (ej. "2 documento(s) en '1.1 Certificados'"). Se
+  revisa desde el nuevo boton **"Historial de cambios"** en la barra de
+  herramientas (`AuditLogDialog`), como una tabla con la entrada mas
+  reciente primero. Asi, si dos personas comparten el mismo proyecto desde
+  computadoras distintas, cada una queda identificada por sus propios
+  cambios, no solo la fecha de la ultima modificacion.
 
 ## Roadmap / Fase 4
 

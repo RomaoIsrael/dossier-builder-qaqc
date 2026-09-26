@@ -79,6 +79,50 @@ class AboutDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class AuditLogDialog(QDialog):
+    """Historial de cambios del proyecto: quien (usuario del sistema
+    operativo) hizo que accion y cuando. Util cuando varias personas, cada
+    una desde su propia computadora, editan el mismo proyecto -- el
+    historial viaja dentro del propio archivo .dossierproj.
+    """
+
+    def __init__(self, audit_log: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Historial de cambios")
+        self.resize(720, 420)
+
+        layout = QVBoxLayout(self)
+
+        entries = list(reversed(audit_log))  # mas reciente primero
+        layout.addWidget(QLabel(f"{len(entries)} accion(es) registradas (mas reciente primero)."))
+
+        table = QTableWidget(len(entries), 4)
+        table.setHorizontalHeaderLabels(["Fecha y hora", "Usuario", "Accion", "Detalle"])
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.verticalHeader().setVisible(False)
+        for row, entry in enumerate(entries):
+            table.setItem(row, 0, QTableWidgetItem(self._format_timestamp(entry.get("timestamp", ""))))
+            table.setItem(row, 1, QTableWidgetItem(entry.get("user", "")))
+            table.setItem(row, 2, QTableWidgetItem(entry.get("action", "")))
+            table.setItem(row, 3, QTableWidgetItem(entry.get("details", "")))
+        table.horizontalHeader().setStretchLastSection(True)
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _format_timestamp(value: str) -> str:
+        try:
+            dt = datetime.fromisoformat(value)
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return value
+
+
 class MetadataDialog(QDialog):
     """Edicion de los campos de encabezado del proyecto (Pozo, WO, Codigo, etc.)."""
 
