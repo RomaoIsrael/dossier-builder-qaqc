@@ -551,6 +551,23 @@ página exacta tras las inserciones.
   breve pantalla de bienvenida (dibujada en el momento, sin depender de
   ningun archivo de imagen) mientras se prepara la interfaz, y el programa
   se abre automaticamente apenas termina (`app/main.py`, `_show_splash`).
+- **Fix: el panel de miniaturas ahora incluye las paginas de la plantilla**
+  (el archivo base elegido al crear el proyecto), no solo los documentos
+  agregados. Antes el total de hojas que se mostraba ahi (y el indicador
+  "Hoja N de M") no coincidia con el numero de paginas real del dossier
+  final porque las paginas de la plantilla (caratula, indice, separadores)
+  no se contaban. Ahora el panel recorre el dossier en su **orden real de
+  ensamblado** (`DossierBuilder.build_blocks()`, expuesto como metodo
+  publico reutilizando la misma logica de `generate()`), intercalando
+  paginas de plantilla y hojas de documentos exactamente como quedaran en
+  el PDF final. Las miniaturas de la plantilla se muestran solo como
+  referencia (no se pueden excluir ni seleccionar en cascada, ya que no
+  pertenecen a un documento propio).
+- **Hojas excluidas ahora se ven en rojo**: ademas del texto "(excluida
+  del dossier)", la miniatura de una hoja excluida ahora se tine de rojo
+  semitransparente (antes solo se ponia en gris), para poder identificar
+  de un vistazo cuales hojas no se van a contar en el dossier y decidir
+  mas adelante si se vuelven a incluir.
 
 ## Roadmap / Fase 4
 

@@ -268,39 +268,48 @@ tambien los elimina directamente de la seccion.</p>
 
 <h3>5.5 Panel de miniaturas (a la derecha)</h3>
 <p>A la derecha del panel de documentos hay un panel fijo con una miniatura
-de <b>cada hoja (pagina) de cada documento</b> del dossier completo (de
-todas las secciones, no solo la seleccionada), en el mismo orden en que
-apareceran en el PDF final, con una barra de desplazamiento vertical para
-recorrerlas todas. Un documento de varias paginas aparece como varias
-miniaturas seguidas, una por hoja (por ejemplo, "Hoja 2 de 5").</p>
+de <b>cada hoja del dossier completo, en su orden real de ensamblado</b>:
+tanto las paginas de la <b>plantilla</b> (caratula, indice, separadores de
+seccion) como cada hoja de cada documento agregado. Un documento de varias
+paginas aparece como varias miniaturas seguidas (por ejemplo, "Hoja 2 de
+5"). Al mostrar tambien las paginas de la plantilla, el total que se ve
+aqui coincide con el numero real de paginas del dossier final, y se puede
+revisar el archivo completo tal como quedara, no solo los documentos que
+se agregaron.</p>
 <ul>
 <li><b>Indicador de posicion</b>: justo arriba de las miniaturas se muestra
 "Hoja N de M" (igual que en Adobe Acrobat o Foxit), donde N es la posicion
-de la miniatura seleccionada y M el total de hojas de todo el dossier. Se
-actualiza automaticamente al seleccionar cualquier miniatura.</li>
+de la miniatura seleccionada y M el total de hojas de todo el dossier
+(incluida la plantilla). Se actualiza automaticamente al seleccionar
+cualquier miniatura.</li>
 <li><b>Tamano de las miniaturas</b>: el control deslizante "Tamano" arriba
 del panel agranda o achica las miniaturas al gusto (o segun el espacio
 disponible en la pantalla); el panel tambien se puede ensanchar arrastrando
 el borde que lo separa del panel de documentos. La preferencia de tamano
 se recuerda para la proxima vez que se abra el programa.</li>
-<li>Al hacer clic en una miniatura, se selecciona automaticamente su
-<b>seccion</b> en el arbol y su <b>documento</b> en la lista central (y al
-revés: seleccionar un documento en la lista central resalta su miniatura
-aqui, y elegir una seccion en el arbol desplaza el panel hasta el inicio de
-esa seccion). Es una seleccion en cascada: los tres paneles se mantienen
-sincronizados entre si.</li>
+<li>Al hacer clic en una miniatura de un documento, se selecciona
+automaticamente su <b>seccion</b> en el arbol y su <b>documento</b> en la
+lista central (y al revés: seleccionar un documento en la lista central
+resalta su miniatura aqui, y elegir una seccion en el arbol desplaza el
+panel hasta el inicio de esa seccion). Es una seleccion en cascada: los
+tres paneles se mantienen sincronizados entre si. Las miniaturas de la
+plantilla son solo de referencia (no pertenecen a ningun documento propio)
+y no participan de esta sincronizacion; su clic derecho muestra un aviso
+en vez del menu habitual.</li>
 <li><b>Excluir o restaurar una hoja puntual</b>: en un documento de varias
 paginas, la tecla <b>Suprimir/Backspace</b> o el clic derecho sobre una
 miniatura especifica ofrecen "Excluir esta hoja del dossier" (siempre pide
 confirmacion antes de excluirla; esa pagina no se incluye al generar, sin
 modificar el archivo original) o "Restaurar esta hoja" si ya estaba
 excluida (esto no pide confirmacion, ya que no quita nada del dossier). Una
-hoja excluida se muestra en gris con la leyenda "(excluida del dossier)".
-Si un documento tiene solo una hoja (o ya se excluyeron todas las demas), en
-su lugar se pregunta si se desea eliminar el documento completo.</li>
-<li><b>Clic derecho</b> sobre una miniatura tambien ofrece las mismas
-acciones que el menu de la lista de documentos: Vista previa, Abrir
-documento, Abrir ubicacion, Tratamiento de firma, <b>+ Agregar
+hoja excluida se muestra con un <b>tinte rojo sobre la miniatura</b> y la
+leyenda "(excluida del dossier)", para distinguirla de un vistazo y poder
+decidir mas adelante si se vuelve a incluir o no. Si un documento tiene
+solo una hoja (o ya se excluyeron todas las demas), en su lugar se
+pregunta si se desea eliminar el documento completo.</li>
+<li><b>Clic derecho</b> sobre una miniatura de un documento tambien ofrece
+las mismas acciones que el menu de la lista de documentos: Vista previa,
+Abrir documento, Abrir ubicacion, Tratamiento de firma, <b>+ Agregar
 documento(s) en esta seccion</b> y <b>Eliminar documento completo</b>,
 todas aplicadas al documento de la miniatura seleccionada, sin tener que
 ubicarlo antes a mano en el arbol o en la lista.</li>

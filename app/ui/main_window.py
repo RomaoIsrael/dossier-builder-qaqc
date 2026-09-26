@@ -813,21 +813,63 @@ class MainWindow(QMainWindow):
 
     def _refresh_thumbnail_rail(self) -> None:
         """Reconstruye el panel de miniaturas con una imagen por cada HOJA
-        (pagina) de cada documento del dossier -- un documento de varias
-        paginas aparece como varias miniaturas consecutivas. No incluye las
-        paginas de la plantilla (separadoras/caratula): solo las hojas de
-        los documentos, que se pueden excluir, borrar o reemplazar desde
-        aqui."""
-        if not self.project:
+        del dossier completo, EN SU ORDEN REAL DE ENSAMBLADO: tanto las
+        paginas de la plantilla (caratula, indice, separadores) como cada
+        hoja de cada documento (un documento de varias paginas aparece como
+        varias miniaturas consecutivas). Asi el total que se muestra aqui
+        coincide con el del dossier final, y se puede ver el archivo
+        completo, no solo los documentos agregados."""
+        if not self.project or not self.project.template_path:
             self.thumbnail_rail.clear()
             self._update_thumbnail_position_label()
             return
 
+        try:
+            builder = DossierBuilder(self.project)
+            blocks = builder.build_blocks()
+        except pdf_engine.PDFOpenError:
+            self.thumbnail_rail.clear()
+            self._update_thumbnail_position_label()
+            return
+
+        section_labels = {
+            section.id: f"{section.numbering} {section.title}".strip()
+            for section in self.project.iter_all_sections()
+        }
+
+        template_doc: Optional[fitz.Document] = None
+        if Path(self.project.template_path).exists():
+            try:
+                template_doc = fitz.open(self.project.template_path)
+            except Exception:  # noqa: BLE001 - una plantilla danada no debe romper el panel
+                template_doc = None
+
         entries: list[RailEntry] = []
-        for section in self.project.iter_all_sections():
-            section_label = f"{section.numbering} {section.title}".strip()
-            for doc in section.documents:
-                entries.extend(self._build_rail_entries_for_document(section.id, section_label, doc))
+        try:
+            for block in blocks:
+                kind = block[0]
+                if kind == "template":
+                    _, page_index = block
+                    pixmap = None
+                    if template_doc is not None:
+                        pixmap = render_pdf_page_pixmap(template_doc, page_index, ThumbnailRailWidget.RENDER_WIDTH)
+                    entries.append(
+                        RailEntry(
+                            document_id=None,
+                            section_id=None,
+                            page_index=page_index,
+                            caption=f"Plantilla\nPagina {page_index + 1}",
+                            pixmap=pixmap,
+                        )
+                    )
+                elif kind == "doc":
+                    _, section_id, doc = block
+                    section_label = section_labels.get(section_id, "")
+                    entries.extend(self._build_rail_entries_for_document(section_id, section_label, doc))
+                # los bloques "bookmark" (secciones dinamicas) no ocupan hoja fisica.
+        finally:
+            if template_doc is not None:
+                template_doc.close()
 
         self.thumbnail_rail.load_entries(entries)
         self._update_thumbnail_position_label()
@@ -1007,10 +1049,16 @@ class MainWindow(QMainWindow):
 
         document_id = item.data(Qt.UserRole)
         page_index = item.data(Qt.UserRole + 2)
-        _section, doc = self._find_document_and_section(document_id)
 
         menu = QMenu(self)
-        if doc is not None and (doc.page_count or 1) > 1:
+        if not document_id:
+            action = menu.addAction("Pagina de la plantilla (no se puede modificar aqui)")
+            action.setEnabled(False)
+            menu.exec(self.thumbnail_rail.viewport().mapToGlobal(pos))
+            return
+
+        _section, doc = self._find_document_and_section(document_id)
+        if doc is not None and self._rail_page_count_for_document(document_id) > 1:
             if page_index in set(doc.excluded_pages):
                 menu.addAction(
                     "Restaurar esta hoja", lambda: self._toggle_page_excluded(document_id, page_index, exclude=False)

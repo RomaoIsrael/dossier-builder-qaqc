@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent, QPixmap
+from PySide6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem
 
 from app.models.document_model import DocumentItem, DocumentStatus
@@ -222,15 +222,20 @@ class SectionTreeWidget(QTreeWidget):
 
 @dataclass
 class RailEntry:
-    """Una entrada del panel de miniaturas: UNA hoja (pagina) de un
-    documento del dossier, con su seccion, su numero de pagina dentro del
-    documento y una imagen ya renderizada (o ``None`` si no se pudo
+    """Una entrada del panel de miniaturas: UNA hoja (pagina) del dossier
+    completo, con su seccion, su numero de pagina dentro del documento (o
+    de la plantilla) y una imagen ya renderizada (o ``None`` si no se pudo
     generar). Un documento de varias paginas genera varias entradas
-    consecutivas, una por hoja."""
+    consecutivas, una por hoja.
 
-    document_id: str
-    section_id: str
-    page_index: int  # 0-based, dentro del documento de origen
+    Las hojas de la PLANTILLA (caratula, indice, separadores) tambien se
+    incluyen, con ``document_id``/``section_id`` en ``None``: se muestran
+    para ver el archivo completo, pero no se pueden excluir ni seleccionar
+    en cascada (no pertenecen a ningun documento editable)."""
+
+    document_id: Optional[str]
+    section_id: Optional[str]
+    page_index: int  # 0-based, dentro del documento/plantilla de origen
     caption: str
     pixmap: Optional[QPixmap]
     excluded: bool = False  # True si esta hoja esta marcada para no incluirse en el dossier
@@ -298,12 +303,30 @@ class ThumbnailRailWidget(QListWidget):
             item.setData(Qt.UserRole, entry.document_id)
             item.setData(Qt.UserRole + 1, entry.section_id)
             item.setData(Qt.UserRole + 2, entry.page_index)
-            if entry.pixmap is not None:
-                item.setIcon(QIcon(entry.pixmap))
+            pixmap = entry.pixmap
+            if pixmap is not None and entry.excluded:
+                pixmap = self._tint_excluded(pixmap)
+            if pixmap is not None:
+                item.setIcon(QIcon(pixmap))
             item.setTextAlignment(Qt.AlignHCenter)
             if entry.excluded:
-                item.setForeground(Qt.gray)
+                item.setForeground(QColor("#c0392b"))
             self.addItem(item)
+
+    @staticmethod
+    def _tint_excluded(pixmap: QPixmap) -> QPixmap:
+        """Superpone un tinte rojo semitransparente sobre la miniatura de
+        una hoja excluida, para que se distinga a simple vista (sin tener
+        que leer el texto de abajo) cuales hojas no se van a contar en el
+        dossier final."""
+        tinted = QPixmap(pixmap.size())
+        tinted.fill(Qt.transparent)
+        painter = QPainter(tinted)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceAtop)
+        painter.fillRect(tinted.rect(), QColor(200, 0, 0, 100))
+        painter.end()
+        return tinted
 
     def _on_current_item_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
         if current is None:

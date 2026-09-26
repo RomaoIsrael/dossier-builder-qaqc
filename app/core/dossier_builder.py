@@ -531,6 +531,21 @@ class DossierBuilder:
         return index_page_count
 
     # ------------------------------------------------------------------
+    def build_blocks(self, template_page_count: Optional[int] = None) -> list[tuple]:
+        """Devuelve el orden exacto de ensamblado (paginas de plantilla,
+        marcadores de seccion y documentos) tal como lo usa ``generate()``,
+        resolviendo ``template_page_count`` igual que ``build_preview_outline``.
+        Publico para que otras partes (por ejemplo, el panel de miniaturas
+        permanente) puedan recorrer el dossier completo en su orden real sin
+        duplicar esta logica de intercalado plantilla/secciones/documentos.
+        """
+        if template_page_count is None:
+            template_page_count = self.project.template_page_count
+        if template_page_count is None and self.project.template_path:
+            template_page_count = pdf_engine.get_page_count(self.project.template_path)
+        template_page_count = template_page_count or 0
+        return self._build_blocks(template_page_count)
+
     def build_preview_outline(self, template_page_count: Optional[int] = None) -> list[PreviewRow]:
         """Vista previa estructural y rapida del dossier: el orden final de
         paginas de plantilla y documentos, SIN abrir ni aplanar ningun PDF
@@ -538,17 +553,12 @@ class DossierBuilder:
         para revisar el orden antes de generar, incluso en dossiers de
         cientos de paginas, sin el costo de renderizar miniaturas.
         """
-        if template_page_count is None:
-            template_page_count = self.project.template_page_count
-        if template_page_count is None and self.project.template_path:
-            template_page_count = pdf_engine.get_page_count(self.project.template_path)
-        template_page_count = template_page_count or 0
+        blocks = self.build_blocks(template_page_count)
 
         section_labels = {
             node.id: f"{node.numbering} {node.title}".strip() for node in self.project.iter_all_sections()
         }
 
-        blocks = self._build_blocks(template_page_count)
         rows: list[PreviewRow] = []
         running_page = 1
         for block in blocks:
