@@ -38,6 +38,10 @@ class AppSettings:
     max_preview_dpi: int = 100
     recent_projects: list[str] = field(default_factory=list)
 
+    # Panel de miniaturas: tamano de exhibicion preferido por el usuario
+    # (ancho en pixeles), para que se recuerde entre sesiones.
+    thumbnail_rail_zoom: int = 130
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

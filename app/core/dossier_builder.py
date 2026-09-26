@@ -71,6 +71,27 @@ class PreviewRow:
     source_page_index: int = 0  # pagina 0-based dentro de source_path a renderizar como miniatura
 
 
+def _valid_excluded_pages(doc: DocumentItem) -> set[int]:
+    """``doc.excluded_pages`` filtrado a indices realmente dentro de rango
+    (defensivo: si el archivo cambio despues de marcar exclusiones, un
+    indice fuera de rango simplemente se ignora en vez de romper nada)."""
+    total = doc.page_count or 0
+    return {p for p in doc.excluded_pages if 0 <= p < total}
+
+
+def _first_included_page_index(doc: DocumentItem) -> int:
+    """La primera pagina (0-based) de ``doc`` que no esta excluida, para
+    saber cual usar como miniatura representativa. 0 si no hay ninguna
+    excluida (o si el documento no tiene paginas incluidas, caso que la UI
+    ya evita permitir)."""
+    excluded = _valid_excluded_pages(doc)
+    total = doc.page_count or 0
+    for index in range(total):
+        if index not in excluded:
+            return index
+    return 0
+
+
 # -- Indice automatico (opcional) --------------------------------------
 #
 # La paginacion (cuantas paginas de indice se necesitan) depende solo de
@@ -311,14 +332,18 @@ class DossierBuilder:
                     section_page_position.setdefault(section_id, out_doc.page_count)
                     insert_path = doc.flattened_path or doc.source_path
                     first_page = out_doc.page_count
+                    excluded_pages = _valid_excluded_pages(doc)
                     try:
-                        pdf_engine.insert_pdf_pages(out_doc, insert_path, out_doc.page_count)
+                        inserted = pdf_engine.insert_pdf_pages(
+                            out_doc, insert_path, out_doc.page_count, excluded_pages=excluded_pages
+                        )
                     except Exception as exc:  # noqa: BLE001 - incluye errores de bajo nivel de PyMuPDF
                         raise DossierGenerationError(
                             f"No se pudo insertar '{doc.name}' en el dossier: {exc}. Ruta: {insert_path}"
                         ) from exc
                     inserts_since_flush += 1
-                    document_page_position[doc.id] = first_page
+                    if inserted > 0:
+                        document_page_position[doc.id] = first_page
                     tick(f"Insertando: {doc.name}")
 
                 if inserts_since_flush >= _FLUSH_EVERY_N_INSERTS:
@@ -545,19 +570,20 @@ class DossierBuilder:
             elif kind == "doc":
                 _, section_id, doc = block
                 pages = doc.page_count
+                effective_pages = pages - len(_valid_excluded_pages(doc)) if pages is not None else None
                 rows.append(
                     PreviewRow(
                         kind="doc",
                         label=doc.name,
                         section_label=section_labels.get(section_id, ""),
                         start_page=running_page,
-                        page_count=pages,
+                        page_count=effective_pages,
                         document_id=doc.id,
                         source_path=doc.flattened_path or doc.source_path or None,
-                        source_page_index=0,
+                        source_page_index=_first_included_page_index(doc),
                     )
                 )
-                running_page += pages if pages else 1
+                running_page += effective_pages if effective_pages else 1
             # los marcadores "bookmark" (secciones dinamicas) no ocupan pagina.
         return rows
 
@@ -749,6 +775,7 @@ class DossierBuilder:
                     "flatten_dpi": doc.flatten_dpi,
                     "has_signature": doc.has_signature,
                     "page_count": doc.page_count,
+                    "excluded_pages": sorted(_valid_excluded_pages(doc)),
                 }
             )
 

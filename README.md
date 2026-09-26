@@ -507,16 +507,32 @@ página exacta tras las inserciones.
   panel de secciones, panel de documentos, metadatos, configuracion,
   preferencias, historial de cambios y el flujo completo de generacion del
   dossier), sin necesidad de salir del programa ni leer este README.
-- **Panel de miniaturas del dossier completo**: nuevo panel fijo a la
-  derecha del panel de documentos (`ThumbnailRailWidget`), con una miniatura
-  de la primera pagina de cada documento de **todas** las secciones, en el
-  orden final del dossier, con barra de desplazamiento vertical. Al
-  seleccionar una miniatura se sincroniza automaticamente la seccion (en el
-  arbol) y el documento (en la lista central) correspondientes, y viceversa
-  (seleccion en cascada entre los tres paneles). Desde el menu de clic
-  derecho de una miniatura (o con la tecla Suprimir) se puede eliminar ese
-  documento o agregar otro en la misma seccion, sin tener que ubicarlo antes
-  manualmente en el arbol.
+- **Panel de miniaturas del dossier completo, por hoja**: nuevo panel fijo a
+  la derecha del panel de documentos (`ThumbnailRailWidget`), con una
+  miniatura de **cada hoja (pagina)** de cada documento de **todas** las
+  secciones, en el orden final del dossier, con barra de desplazamiento
+  vertical (un documento de varias paginas aparece como varias miniaturas
+  seguidas, "Hoja 1 de 5", "Hoja 2 de 5", etc.). Un control deslizante
+  "Tamano" agranda o achica las miniaturas segun la necesidad de la
+  pantalla o la preferencia de quien lo usa, y esa preferencia se recuerda
+  entre sesiones (`AppSettings.thumbnail_rail_zoom`); las miniaturas se
+  renderizan una sola vez a buena resolucion y solo se reescalan al hacer
+  zoom, sin volver a abrir los PDF. Al seleccionar una miniatura se
+  sincroniza automaticamente la seccion (en el arbol) y el documento (en la
+  lista central) correspondientes, y viceversa (seleccion en cascada entre
+  los tres paneles).
+- **Excluir hojas puntuales de un documento**: en un documento de varias
+  paginas, desde el panel de miniaturas se puede excluir (o restaurar) una
+  hoja especifica del dossier final sin modificar el archivo original ni
+  usar otra herramienta (`DocumentItem.excluded_pages`, nuevo campo del
+  modelo). Las hojas excluidas se muestran en gris en el panel y el
+  documento en la lista central se marca con "N HOJA(S) EXCLUIDA(S)". Al
+  generar, `pdf_engine.insert_pdf_pages` omite esas paginas (y las vistas
+  previas del dossier tambien reflejan el conteo real de paginas
+  resultante). Si un documento queda con una sola hoja, en su lugar se
+  ofrece eliminar el documento completo. Desde el menu de clic derecho de
+  una miniatura (o con la tecla Suprimir) tambien se puede eliminar el
+  documento completo o agregar otro en la misma seccion.
 
 ## Roadmap / Fase 4
 

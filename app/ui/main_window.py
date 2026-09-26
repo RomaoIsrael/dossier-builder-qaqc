@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSlider,
     QSplitter,
     QStatusBar,
     QStyle,
@@ -299,18 +300,32 @@ class MainWindow(QMainWindow):
         # -- Panel derecho: miniaturas de todo el dossier --------------------
         thumb_container = QWidget()
         thumb_layout = QVBoxLayout(thumb_container)
+
+        thumb_header = QHBoxLayout()
         thumb_label = QLabel("Miniaturas del dossier")
         thumb_label.setStyleSheet("font-weight: 600; padding: 4px 2px;")
-        thumb_layout.addWidget(thumb_label)
+        thumb_header.addWidget(thumb_label, stretch=1)
+        thumb_header.addWidget(QLabel("Tamano:"))
+        self.thumbnail_zoom_slider = QSlider(Qt.Horizontal)
+        self.thumbnail_zoom_slider.setRange(ThumbnailRailWidget.MIN_ZOOM, ThumbnailRailWidget.MAX_ZOOM)
+        self.thumbnail_zoom_slider.setFixedWidth(90)
+        self.thumbnail_zoom_slider.setToolTip("Agrandar o achicar las miniaturas")
+        thumb_header.addWidget(self.thumbnail_zoom_slider)
+        thumb_layout.addLayout(thumb_header)
 
         self.thumbnail_rail = ThumbnailRailWidget()
+        initial_zoom = self.settings_service.settings.thumbnail_rail_zoom or ThumbnailRailWidget.DEFAULT_ZOOM
+        self.thumbnail_zoom_slider.setValue(initial_zoom)
+        self.thumbnail_rail.set_thumbnail_zoom(initial_zoom)
+        self.thumbnail_zoom_slider.valueChanged.connect(self.thumbnail_rail.set_thumbnail_zoom)
+        self.thumbnail_zoom_slider.sliderReleased.connect(self._save_thumbnail_zoom)
         self.thumbnail_rail.thumbnail_activated.connect(self._on_thumbnail_activated)
-        self.thumbnail_rail.delete_requested.connect(self.remove_selected_documents)
+        self.thumbnail_rail.delete_requested.connect(self._on_thumbnail_delete_requested)
         self.thumbnail_rail.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
         thumb_layout.addWidget(self.thumbnail_rail, stretch=1)
 
         splitter.addWidget(thumb_container)
-        splitter.setSizes([320, 780, 200])
+        splitter.setSizes([320, 780, 220])
 
         self.setCentralWidget(splitter)
 
@@ -774,59 +789,79 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Panel de miniaturas (a la derecha): sincronizacion con seccion/documento
     # ------------------------------------------------------------------
+    def _save_thumbnail_zoom(self) -> None:
+        self.settings_service.settings.thumbnail_rail_zoom = self.thumbnail_zoom_slider.value()
+        self.settings_service.save()
+
+    def _find_document_and_section(self, document_id: str) -> tuple[Optional[SectionNode], Optional[DocumentItem]]:
+        if not self.project:
+            return None, None
+        for section in self.project.iter_all_sections():
+            for doc in section.documents:
+                if doc.id == document_id:
+                    return section, doc
+        return None, None
+
     def _refresh_thumbnail_rail(self) -> None:
-        """Reconstruye el panel de miniaturas con una imagen por cada
-        documento del dossier, en su orden final. No incluye las paginas de
-        la plantilla (separadoras/caratula): solo los documentos que se
-        pueden borrar o reemplazar desde aqui."""
-        if not self.project or not self.project.template_path:
+        """Reconstruye el panel de miniaturas con una imagen por cada HOJA
+        (pagina) de cada documento del dossier -- un documento de varias
+        paginas aparece como varias miniaturas consecutivas. No incluye las
+        paginas de la plantilla (separadoras/caratula): solo las hojas de
+        los documentos, que se pueden excluir, borrar o reemplazar desde
+        aqui."""
+        if not self.project:
             self.thumbnail_rail.clear()
             return
-        try:
-            builder = DossierBuilder(self.project)
-            rows = builder.build_preview_outline()
-        except pdf_engine.PDFOpenError:
-            self.thumbnail_rail.clear()
-            return
-
-        section_by_doc_id = {
-            doc.id: section.id for section in self.project.iter_all_sections() for doc in section.documents
-        }
-
-        open_docs: dict[str, Optional[fitz.Document]] = {}
-
-        def get_source_doc(path: str) -> Optional[fitz.Document]:
-            if path not in open_docs:
-                try:
-                    open_docs[path] = fitz.open(path)
-                except Exception:  # noqa: BLE001 - un archivo movido/danado no debe romper el panel
-                    open_docs[path] = None
-            return open_docs[path]
 
         entries: list[RailEntry] = []
-        for row in rows:
-            if row.kind != "doc" or not row.document_id:
-                continue
-            section_id = section_by_doc_id.get(row.document_id)
-            if section_id is None:
-                continue
-            pixmap = None
-            if row.source_path and Path(row.source_path).exists():
-                source_doc = get_source_doc(row.source_path)
-                if source_doc is not None:
-                    pixmap = render_pdf_page_pixmap(source_doc, row.source_page_index, ThumbnailRailWidget.THUMB_WIDTH)
-            caption = f"{row.section_label}\n{row.label}"
-            entries.append(
-                RailEntry(document_id=row.document_id, section_id=section_id, caption=caption, pixmap=pixmap)
-            )
-
-        for doc in open_docs.values():
-            if doc is not None:
-                doc.close()
+        for section in self.project.iter_all_sections():
+            section_label = f"{section.numbering} {section.title}".strip()
+            for doc in section.documents:
+                entries.extend(self._build_rail_entries_for_document(section.id, section_label, doc))
 
         self.thumbnail_rail.load_entries(entries)
 
-    def _on_thumbnail_activated(self, section_id: str, document_id: str) -> None:
+    def _build_rail_entries_for_document(
+        self, section_id: str, section_label: str, doc: DocumentItem
+    ) -> list[RailEntry]:
+        path = doc.source_path
+        if not path or not Path(path).exists():
+            caption = f"{section_label}\n{doc.name}\n(archivo no disponible)"
+            return [RailEntry(document_id=doc.id, section_id=section_id, page_index=0, caption=caption, pixmap=None)]
+
+        try:
+            source_doc = fitz.open(path)
+        except Exception:  # noqa: BLE001 - un archivo danado no debe romper el panel
+            caption = f"{section_label}\n{doc.name}\n(no se pudo abrir)"
+            return [RailEntry(document_id=doc.id, section_id=section_id, page_index=0, caption=caption, pixmap=None)]
+
+        excluded = set(doc.excluded_pages)
+        entries: list[RailEntry] = []
+        try:
+            total_pages = source_doc.page_count
+            for page_index in range(total_pages):
+                is_excluded = page_index in excluded
+                pixmap = render_pdf_page_pixmap(source_doc, page_index, ThumbnailRailWidget.RENDER_WIDTH)
+                caption = f"{section_label}\n{doc.name}"
+                if total_pages > 1:
+                    caption += f"\nHoja {page_index + 1} de {total_pages}"
+                if is_excluded:
+                    caption += "\n(excluida del dossier)"
+                entries.append(
+                    RailEntry(
+                        document_id=doc.id,
+                        section_id=section_id,
+                        page_index=page_index,
+                        caption=caption,
+                        pixmap=pixmap,
+                        excluded=is_excluded,
+                    )
+                )
+        finally:
+            source_doc.close()
+        return entries
+
+    def _on_thumbnail_activated(self, section_id: str, document_id: str, page_index: int) -> None:
         """Una miniatura fue seleccionada: llevar el arbol de secciones y la
         lista de documentos a esa misma seccion/documento (seleccion en
         cascada)."""
@@ -842,7 +877,7 @@ class MainWindow(QMainWindow):
 
     def _on_document_selection_changed(self) -> None:
         """Un documento fue seleccionado en la lista central: reflejar esa
-        misma seleccion en el panel de miniaturas."""
+        misma seleccion en el panel de miniaturas (en su primera hoja)."""
         if self._syncing_selection:
             return
         ids = self.doc_list.selected_document_ids()
@@ -853,6 +888,54 @@ class MainWindow(QMainWindow):
             finally:
                 self._syncing_selection = False
 
+    def _on_thumbnail_delete_requested(self) -> None:
+        """Tecla Supr/Backspace sobre una miniatura: excluye esa hoja (o, si
+        es la unica que queda, ofrece eliminar el documento completo)."""
+        item = self.thumbnail_rail.currentItem()
+        if item is None:
+            return
+        document_id = item.data(Qt.UserRole)
+        page_index = item.data(Qt.UserRole + 2)
+        if not document_id or page_index is None:
+            return
+        self._toggle_page_excluded(document_id, page_index, exclude=True)
+
+    def _toggle_page_excluded(self, document_id: str, page_index: int, exclude: bool) -> None:
+        section, doc = self._find_document_and_section(document_id)
+        if doc is None:
+            return
+        excluded = set(doc.excluded_pages)
+        total_pages = doc.page_count or 1
+
+        if exclude:
+            if page_index not in excluded and (total_pages - len(excluded)) <= 1:
+                confirm = QMessageBox.question(
+                    self,
+                    "Excluir hoja",
+                    "Esta es la unica hoja que queda de este documento. Para quitarla hay que "
+                    "eliminar el documento completo. Eliminarlo?",
+                )
+                if confirm == QMessageBox.Yes:
+                    self._syncing_selection = True
+                    try:
+                        self.tree.select_section(section.id)
+                        self.doc_list.select_document(document_id)
+                    finally:
+                        self._syncing_selection = False
+                    self.remove_selected_documents()
+                return
+            excluded.add(page_index)
+            action, verb = "Excluir hoja", "excluida"
+        else:
+            excluded.discard(page_index)
+            action, verb = "Restaurar hoja", "restaurada"
+
+        doc.excluded_pages = sorted(excluded)
+        section_label = f"{section.numbering} {section.title}".strip() if section else ""
+        self._touch_project(action, f"Hoja {page_index + 1} {verb} de '{doc.name}' en '{section_label}'")
+        self._refresh_thumbnail_rail()
+        self._refresh_document_list()
+
     def _show_thumbnail_context_menu(self, pos) -> None:
         item = self.thumbnail_rail.itemAt(pos)
         if item is None:
@@ -860,7 +943,23 @@ class MainWindow(QMainWindow):
         if item is not self.thumbnail_rail.currentItem():
             self.thumbnail_rail.setCurrentItem(item)
 
+        document_id = item.data(Qt.UserRole)
+        page_index = item.data(Qt.UserRole + 2)
+        _section, doc = self._find_document_and_section(document_id)
+
         menu = QMenu(self)
+        if doc is not None and (doc.page_count or 1) > 1:
+            if page_index in set(doc.excluded_pages):
+                menu.addAction(
+                    "Restaurar esta hoja", lambda: self._toggle_page_excluded(document_id, page_index, exclude=False)
+                )
+            else:
+                menu.addAction(
+                    "Excluir esta hoja del dossier",
+                    lambda: self._toggle_page_excluded(document_id, page_index, exclude=True),
+                )
+            menu.addSeparator()
+
         menu.addAction("Vista previa", self.preview_selected_document)
         menu.addAction("Abrir documento", self.open_selected_document_external)
         menu.addAction("Abrir ubicacion", self.open_selected_document_folder)
@@ -879,7 +978,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("+ Agregar documento(s) en esta seccion", self.add_documents)
         menu.addSeparator()
-        menu.addAction("Eliminar", self.remove_selected_documents)
+        menu.addAction("Eliminar documento completo", self.remove_selected_documents)
 
         menu.exec(self.thumbnail_rail.viewport().mapToGlobal(pos))
 

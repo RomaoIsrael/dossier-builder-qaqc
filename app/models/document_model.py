@@ -48,6 +48,13 @@ class DocumentItem:
     file_size_bytes: Optional[int] = None
     sha256_original: Optional[str] = None
 
+    # Paginas (0-based, sobre el archivo original) que el usuario marco para
+    # NO incluir en el dossier final, sin tener que editar el PDF con otra
+    # herramienta (ver panel de miniaturas). Un documento de una sola pagina
+    # no puede quedar con todas sus paginas excluidas: en ese caso se elimina
+    # el documento completo en su lugar.
+    excluded_pages: list[int] = field(default_factory=list)
+
     # Se completan solo cuando el documento requiere aplanado (firma visible).
     flattened_path: Optional[str] = None
     sha256_flattened: Optional[str] = None

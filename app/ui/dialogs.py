@@ -264,28 +264,43 @@ tambien los elimina directamente de la seccion.</p>
 
 <h3>5.5 Panel de miniaturas (a la derecha)</h3>
 <p>A la derecha del panel de documentos hay un panel fijo con una miniatura
-de la primera pagina de <b>cada documento del dossier completo</b> (de todas
-las secciones, no solo la seleccionada), en el mismo orden en que apareceran
-en el PDF final, con una barra de desplazamiento vertical para recorrerlas
-todas.</p>
+de <b>cada hoja (pagina) de cada documento</b> del dossier completo (de
+todas las secciones, no solo la seleccionada), en el mismo orden en que
+apareceran en el PDF final, con una barra de desplazamiento vertical para
+recorrerlas todas. Un documento de varias paginas aparece como varias
+miniaturas seguidas, una por hoja (por ejemplo, "Hoja 2 de 5").</p>
 <ul>
+<li><b>Tamano de las miniaturas</b>: el control deslizante "Tamano" arriba
+del panel agranda o achica las miniaturas al gusto (o segun el espacio
+disponible en la pantalla); el panel tambien se puede ensanchar arrastrando
+el borde que lo separa del panel de documentos. La preferencia de tamano
+se recuerda para la proxima vez que se abra el programa.</li>
 <li>Al hacer clic en una miniatura, se selecciona automaticamente su
 <b>seccion</b> en el arbol y su <b>documento</b> en la lista central (y al
 revés: seleccionar un documento en la lista central resalta su miniatura
 aqui, y elegir una seccion en el arbol desplaza el panel hasta el inicio de
 esa seccion). Es una seleccion en cascada: los tres paneles se mantienen
 sincronizados entre si.</li>
-<li><b>Clic derecho</b> sobre una miniatura abre un menu con las mismas
+<li><b>Excluir o restaurar una hoja puntual</b>: en un documento de varias
+paginas, el clic derecho sobre una miniatura especifica ofrece "Excluir
+esta hoja del dossier" (esa pagina no se incluye al generar, sin modificar
+el archivo original) o "Restaurar esta hoja" si ya estaba excluida. Una
+hoja excluida se muestra en gris con la leyenda "(excluida del dossier)".
+Si un documento tiene solo una hoja (o ya se excluyeron todas las demas),
+en su lugar hay que eliminar el documento completo.</li>
+<li><b>Clic derecho</b> sobre una miniatura tambien ofrece las mismas
 acciones que el menu de la lista de documentos: Vista previa, Abrir
 documento, Abrir ubicacion, Tratamiento de firma, <b>+ Agregar
-documento(s) en esta seccion</b> y <b>Eliminar</b>, todas aplicadas al
-documento de la miniatura seleccionada, sin tener que ubicarlo antes a
-mano en el arbol o en la lista.</li>
+documento(s) en esta seccion</b> y <b>Eliminar documento completo</b>,
+todas aplicadas al documento de la miniatura seleccionada, sin tener que
+ubicarlo antes a mano en el arbol o en la lista.</li>
 <li>La tecla <b>Suprimir/Backspace</b> con una miniatura seleccionada
-tambien elimina ese documento (con confirmacion), igual que en la lista de
-documentos.</li>
+excluye esa hoja (o, si es la unica que queda del documento, ofrece
+eliminar el documento completo).</li>
 <li>El panel se actualiza automaticamente cada vez que se agregan, mueven,
-reordenan o eliminan documentos, o se abre/genera un proyecto.</li>
+reordenan, excluyen o eliminan documentos/hojas, o se abre/genera un
+proyecto. La lista de documentos tambien muestra una etiqueta "N HOJA(S)
+EXCLUIDA(S)" en cualquier documento que tenga paginas excluidas.</li>
 </ul>
 
 <h2>6. Historial de cambios (auditoria)</h2>

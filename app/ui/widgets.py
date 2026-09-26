@@ -28,6 +28,8 @@ def document_display_text(doc: DocumentItem, index: int) -> str:
         tags.append("FIRMA")
     if doc.will_be_flattened:
         tags.append("SE APLANARA")
+    if doc.excluded_pages:
+        tags.append(f"{len(doc.excluded_pages)} HOJA(S) EXCLUIDA(S)")
     status_tag = STATUS_LABELS.get(doc.status, "")
     if status_tag:
         tags.append(status_tag.strip("[]"))
@@ -220,30 +222,43 @@ class SectionTreeWidget(QTreeWidget):
 
 @dataclass
 class RailEntry:
-    """Una entrada del panel de miniaturas: un documento del dossier, con su
-    seccion y una imagen ya renderizada de su primera pagina (o ``None`` si
-    no se pudo generar)."""
+    """Una entrada del panel de miniaturas: UNA hoja (pagina) de un
+    documento del dossier, con su seccion, su numero de pagina dentro del
+    documento y una imagen ya renderizada (o ``None`` si no se pudo
+    generar). Un documento de varias paginas genera varias entradas
+    consecutivas, una por hoja."""
 
     document_id: str
     section_id: str
+    page_index: int  # 0-based, dentro del documento de origen
     caption: str
     pixmap: Optional[QPixmap]
+    excluded: bool = False  # True si esta hoja esta marcada para no incluirse en el dossier
 
 
 class ThumbnailRailWidget(QListWidget):
-    """Panel lateral con una miniatura por cada documento del dossier, en su
-    orden final (agrupadas por seccion), con barra de desplazamiento
-    vertical. Al seleccionar una miniatura se avisa (``thumbnail_activated``)
-    con la seccion y el documento correspondientes, para que la ventana
-    principal sincronice el arbol de secciones y la lista de documentos --
-    y viceversa, para poder ubicar, borrar o agregar un documento sin tener
-    que buscarlo manualmente primero.
+    """Panel lateral con una miniatura por cada HOJA (pagina) de cada
+    documento del dossier, en su orden final (agrupadas por seccion y
+    documento), con barra de desplazamiento vertical. Al seleccionar una
+    miniatura se avisa (``thumbnail_activated``) con la seccion y el
+    documento correspondientes, para que la ventana principal sincronice el
+    arbol de secciones y la lista de documentos -- y viceversa, para poder
+    ubicar, excluir una hoja puntual, borrar o agregar un documento sin
+    tener que buscarlo manualmente primero.
+
+    Las miniaturas se renderizan una sola vez a ``RENDER_WIDTH`` (buena
+    resolucion) y despues solo se reescalan al tamano de icono actual
+    (``set_thumbnail_zoom``), asi que acercar/alejar no vuelve a abrir los
+    PDF: es una operacion instantanea.
     """
 
-    THUMB_WIDTH = 96
-    THUMB_HEIGHT = 128
+    RENDER_WIDTH = 240  # resolucion base a la que se renderiza cada miniatura
+    MIN_ZOOM = 70
+    MAX_ZOOM = 240
+    DEFAULT_ZOOM = 130
+    _ASPECT = 1.33  # alto/ancho aproximado de una hoja carta/A4
 
-    thumbnail_activated = Signal(str, str)  # section_id, document_id
+    thumbnail_activated = Signal(str, str, int)  # section_id, document_id, page_index
     delete_requested = Signal()  # tecla Supr/Backspace con una miniatura seleccionada
 
     def __init__(self, parent=None):
@@ -253,14 +268,13 @@ class ThumbnailRailWidget(QListWidget):
         self.setWrapping(False)
         self.setMovement(QListWidget.Static)
         self.setResizeMode(QListWidget.Adjust)
-        self.setIconSize(QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT))
         self.setSpacing(8)
         self.setWordWrap(True)
         self.setUniformItemSizes(False)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.setMinimumWidth(160)
-        self.setMaximumWidth(230)
+        self.setMinimumWidth(150)
+        self.set_thumbnail_zoom(self.DEFAULT_ZOOM)
         self.currentItemChanged.connect(self._on_current_item_changed)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - nombre Qt
@@ -270,15 +284,25 @@ class ThumbnailRailWidget(QListWidget):
             return
         super().keyPressEvent(event)
 
+    def set_thumbnail_zoom(self, width: int) -> None:
+        """Cambia el tamano de exhibicion de las miniaturas (no vuelve a
+        renderizar nada: solo reescala los pixmaps ya generados)."""
+        width = max(self.MIN_ZOOM, min(self.MAX_ZOOM, width))
+        height = int(width * self._ASPECT)
+        self.setIconSize(QSize(width, height))
+
     def load_entries(self, entries: list[RailEntry]) -> None:
         self.clear()
         for entry in entries:
             item = QListWidgetItem(entry.caption)
             item.setData(Qt.UserRole, entry.document_id)
             item.setData(Qt.UserRole + 1, entry.section_id)
+            item.setData(Qt.UserRole + 2, entry.page_index)
             if entry.pixmap is not None:
                 item.setIcon(QIcon(entry.pixmap))
             item.setTextAlignment(Qt.AlignHCenter)
+            if entry.excluded:
+                item.setForeground(Qt.gray)
             self.addItem(item)
 
     def _on_current_item_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
@@ -286,16 +310,28 @@ class ThumbnailRailWidget(QListWidget):
             return
         document_id = current.data(Qt.UserRole)
         section_id = current.data(Qt.UserRole + 1)
+        page_index = current.data(Qt.UserRole + 2)
         if document_id and section_id:
-            self.thumbnail_activated.emit(section_id, document_id)
+            self.thumbnail_activated.emit(section_id, document_id, page_index or 0)
 
-    def select_document(self, section_id: str, document_id: str) -> None:
+    def select_document(self, section_id: str, document_id: str, page_index: int = 0) -> None:
+        """Selecciona la hoja ``page_index`` de ``document_id``. Si esa hoja
+        exacta no existe (por ejemplo, quedo excluida), selecciona la
+        primera hoja disponible de ese documento."""
+        fallback_item = None
         for i in range(self.count()):
             item = self.item(i)
-            if item.data(Qt.UserRole) == document_id and item.data(Qt.UserRole + 1) == section_id:
+            if item.data(Qt.UserRole) != document_id or item.data(Qt.UserRole + 1) != section_id:
+                continue
+            if fallback_item is None:
+                fallback_item = item
+            if item.data(Qt.UserRole + 2) == page_index:
                 self.setCurrentItem(item)
                 self.scrollToItem(item)
                 return
+        if fallback_item is not None:
+            self.setCurrentItem(fallback_item)
+            self.scrollToItem(fallback_item)
 
     def scroll_to_section(self, section_id: str) -> None:
         for i in range(self.count()):

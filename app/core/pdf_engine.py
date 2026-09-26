@@ -129,13 +129,20 @@ def _repair_pdf_copy(path: str) -> Optional[str]:
         doc.close()
 
 
-def insert_pdf_pages(dest_doc: fitz.Document, insert_path: str, at_index: int) -> int:
-    """Inserta todas las paginas de ``insert_path`` en ``dest_doc`` en la posicion ``at_index``.
+def insert_pdf_pages(
+    dest_doc: fitz.Document, insert_path: str, at_index: int, excluded_pages: Optional[set[int]] = None
+) -> int:
+    """Inserta las paginas de ``insert_path`` en ``dest_doc`` en la posicion ``at_index``.
 
     Devuelve la cantidad de paginas insertadas. ``at_index`` sigue la
     convencion de PyMuPDF: las paginas insertadas quedan *despues* de la
     pagina ``at_index - 1`` (es decir, antes de lo que hoy es la pagina
     ``at_index``). Usar ``at_index = dest_doc.page_count`` para agregar al final.
+
+    Si se pasa ``excluded_pages`` (indices 0-based sobre ``insert_path``), esas
+    paginas se omiten (por ejemplo, una hoja que el usuario marco para no
+    incluir en el dossier desde el panel de miniaturas). Si con eso no
+    quedara ninguna pagina por insertar, no se inserta nada y se devuelve 0.
 
     Si la insercion directa falla por un error de bajo nivel de PyMuPDF
     (por ejemplo "source object number out of range", tipico de PDF con
@@ -143,9 +150,24 @@ def insert_pdf_pages(dest_doc: fitz.Document, insert_path: str, at_index: int) -
     reescribiendolo desde cero y se reintenta una vez desde esa copia antes
     de darse por vencido.
     """
+
+    def select_included_pages(doc: fitz.Document) -> int:
+        """Si hay paginas excluidas validas, reduce ``doc`` en el lugar a solo
+        las paginas restantes (en orden). Devuelve cuantas quedaron."""
+        if not excluded_pages:
+            return doc.page_count
+        keep = [i for i in range(doc.page_count) if i not in excluded_pages]
+        if not keep:
+            return 0
+        if len(keep) != doc.page_count:
+            doc.select(keep)
+        return doc.page_count
+
     src_doc = open_document(insert_path)
     try:
-        count = src_doc.page_count
+        count = select_included_pages(src_doc)
+        if count == 0:
+            return 0
         dest_doc.insert_pdf(src_doc, start_at=at_index)
         return count
     except Exception as exc:  # noqa: BLE001 - incluye errores de bajo nivel de PyMuPDF
@@ -158,7 +180,9 @@ def insert_pdf_pages(dest_doc: fitz.Document, insert_path: str, at_index: int) -
         try:
             repaired_doc = open_document(repaired_path)
             try:
-                count = repaired_doc.page_count
+                count = select_included_pages(repaired_doc)
+                if count == 0:
+                    return 0
                 dest_doc.insert_pdf(repaired_doc, start_at=at_index)
                 logger.info("Reparacion exitosa: '%s' se pudo insertar tras reescribirlo.", insert_path)
                 return count
