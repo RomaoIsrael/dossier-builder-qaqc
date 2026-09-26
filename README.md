@@ -533,6 +533,24 @@ página exacta tras las inserciones.
   ofrece eliminar el documento completo. Desde el menu de clic derecho de
   una miniatura (o con la tecla Suprimir) tambien se puede eliminar el
   documento completo o agregar otro en la misma seccion.
+- **Fix: excluir una hoja ya no borra el documento completo por error**: el
+  calculo de "cuantas paginas tiene este documento" para decidir si se
+  puede excluir una hoja (o si hay que eliminar el documento entero) ahora
+  se toma del panel de miniaturas, que ya abrio el PDF real
+  (`_rail_page_count_for_document`), en vez de `doc.page_count`, que podia
+  no estar actualizado en documentos agregados de ciertas formas (por
+  ejemplo, copiados a otra seccion) y hacia que se confundiera un documento
+  de varias paginas con uno de una sola. Ademas, excluir una hoja ahora
+  siempre pide confirmacion antes de hacerlo (restaurarla no, porque no
+  quita nada del dossier).
+- **Indicador de posicion "Hoja N de M"**: arriba del panel de miniaturas,
+  igual que en Adobe Acrobat o Foxit, se muestra la posicion de la
+  miniatura seleccionada sobre el total de hojas de todo el dossier,
+  actualizandose con cada seleccion.
+- **Pantalla de bienvenida al iniciar**: al abrir el programa aparece una
+  breve pantalla de bienvenida (dibujada en el momento, sin depender de
+  ningun archivo de imagen) mientras se prepara la interfaz, y el programa
+  se abre automaticamente apenas termina (`app/main.py`, `_show_splash`).
 
 ## Roadmap / Fase 4
 

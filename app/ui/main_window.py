@@ -313,6 +313,14 @@ class MainWindow(QMainWindow):
         thumb_header.addWidget(self.thumbnail_zoom_slider)
         thumb_layout.addLayout(thumb_header)
 
+        # Indicador de posicion estilo Acrobat/Foxit ("Hoja 45 de 230"),
+        # siempre reflejando la miniatura actualmente seleccionada dentro
+        # de todo el dossier.
+        self.thumbnail_position_label = QLabel("")
+        self.thumbnail_position_label.setAlignment(Qt.AlignCenter)
+        self.thumbnail_position_label.setStyleSheet("color: palette(mid); font-size: 9pt; padding: 0 2px 4px 2px;")
+        thumb_layout.addWidget(self.thumbnail_position_label)
+
         self.thumbnail_rail = ThumbnailRailWidget()
         initial_zoom = self.settings_service.settings.thumbnail_rail_zoom or ThumbnailRailWidget.DEFAULT_ZOOM
         self.thumbnail_zoom_slider.setValue(initial_zoom)
@@ -322,6 +330,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_rail.thumbnail_activated.connect(self._on_thumbnail_activated)
         self.thumbnail_rail.delete_requested.connect(self._on_thumbnail_delete_requested)
         self.thumbnail_rail.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
+        self.thumbnail_rail.currentItemChanged.connect(self._on_thumbnail_current_changed)
         thumb_layout.addWidget(self.thumbnail_rail, stretch=1)
 
         splitter.addWidget(thumb_container)
@@ -811,6 +820,7 @@ class MainWindow(QMainWindow):
         aqui."""
         if not self.project:
             self.thumbnail_rail.clear()
+            self._update_thumbnail_position_label()
             return
 
         entries: list[RailEntry] = []
@@ -820,6 +830,24 @@ class MainWindow(QMainWindow):
                 entries.extend(self._build_rail_entries_for_document(section.id, section_label, doc))
 
         self.thumbnail_rail.load_entries(entries)
+        self._update_thumbnail_position_label()
+
+    def _on_thumbnail_current_changed(self, _current, _previous) -> None:
+        self._update_thumbnail_position_label()
+
+    def _update_thumbnail_position_label(self) -> None:
+        """Indicador estilo Acrobat/Foxit: 'Hoja N de M' sobre el total de
+        hojas del dossier completo, segun la miniatura actualmente
+        seleccionada."""
+        total = self.thumbnail_rail.count()
+        if total == 0:
+            self.thumbnail_position_label.setText("")
+            return
+        current_row = self.thumbnail_rail.currentRow()
+        if current_row < 0:
+            self.thumbnail_position_label.setText(f"{total} hoja(s) en total")
+        else:
+            self.thumbnail_position_label.setText(f"Hoja {current_row + 1} de {total}")
 
     def _build_rail_entries_for_document(
         self, section_id: str, section_label: str, doc: DocumentItem
@@ -900,39 +928,73 @@ class MainWindow(QMainWindow):
             return
         self._toggle_page_excluded(document_id, page_index, exclude=True)
 
+    def _rail_page_count_for_document(self, document_id: str) -> int:
+        """Cuenta cuantas hojas tiene ``document_id`` segun lo que el panel
+        de miniaturas ya cargo (que abrio el PDF real), en vez de confiar en
+        ``doc.page_count`` -- que puede no estar actualizado si el documento
+        se agrego de una forma que no lo inspecciono (por ejemplo, al
+        copiarlo a otra seccion) -- para no confundir "documento de 1 sola
+        pagina" con "documento que todavia no registro su numero de
+        paginas"."""
+        count = sum(
+            1
+            for i in range(self.thumbnail_rail.count())
+            if self.thumbnail_rail.item(i).data(Qt.UserRole) == document_id
+        )
+        return count or 1
+
     def _toggle_page_excluded(self, document_id: str, page_index: int, exclude: bool) -> None:
         section, doc = self._find_document_and_section(document_id)
         if doc is None:
             return
         excluded = set(doc.excluded_pages)
-        total_pages = doc.page_count or 1
 
-        if exclude:
-            if page_index not in excluded and (total_pages - len(excluded)) <= 1:
-                confirm = QMessageBox.question(
-                    self,
-                    "Excluir hoja",
-                    "Esta es la unica hoja que queda de este documento. Para quitarla hay que "
-                    "eliminar el documento completo. Eliminarlo?",
-                )
-                if confirm == QMessageBox.Yes:
-                    self._syncing_selection = True
-                    try:
-                        self.tree.select_section(section.id)
-                        self.doc_list.select_document(document_id)
-                    finally:
-                        self._syncing_selection = False
-                    self.remove_selected_documents()
-                return
-            excluded.add(page_index)
-            action, verb = "Excluir hoja", "excluida"
-        else:
+        if not exclude:
             excluded.discard(page_index)
-            action, verb = "Restaurar hoja", "restaurada"
+            doc.excluded_pages = sorted(excluded)
+            section_label = f"{section.numbering} {section.title}".strip() if section else ""
+            self._touch_project(
+                "Restaurar hoja", f"Hoja {page_index + 1} restaurada de '{doc.name}' en '{section_label}'"
+            )
+            self._refresh_thumbnail_rail()
+            self._refresh_document_list()
+            return
 
+        if page_index in excluded:
+            return  # ya estaba excluida: nada que hacer
+
+        total_pages = self._rail_page_count_for_document(document_id)
+        if (total_pages - len(excluded)) <= 1:
+            confirm = QMessageBox.question(
+                self,
+                "Excluir hoja",
+                "Esta es la unica hoja que queda de este documento. Para quitarla hay que "
+                "eliminar el documento completo. Eliminarlo?",
+            )
+            if confirm == QMessageBox.Yes:
+                self._syncing_selection = True
+                try:
+                    self.tree.select_section(section.id)
+                    self.doc_list.select_document(document_id)
+                finally:
+                    self._syncing_selection = False
+                self.remove_selected_documents()
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Excluir hoja",
+            f"Excluir la hoja {page_index + 1} de '{doc.name}' del dossier final?\n\n"
+            "El archivo original no se modifica; la hoja se puede restaurar despues desde "
+            "este mismo panel.",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        excluded.add(page_index)
         doc.excluded_pages = sorted(excluded)
         section_label = f"{section.numbering} {section.title}".strip() if section else ""
-        self._touch_project(action, f"Hoja {page_index + 1} {verb} de '{doc.name}' en '{section_label}'")
+        self._touch_project("Excluir hoja", f"Hoja {page_index + 1} excluida de '{doc.name}' en '{section_label}'")
         self._refresh_thumbnail_rail()
         self._refresh_document_list()
 
