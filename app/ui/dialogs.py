@@ -46,6 +46,24 @@ APP_AUTHOR_NAME = "Romao Israel Landázuri Balseca"
 APP_AUTHOR_COUNTRY = "Ecuador"
 
 
+def render_pdf_page_pixmap(doc: fitz.Document, page_index: int, max_width: int) -> Optional[QPixmap]:
+    """Renderiza una miniatura (QPixmap) de una pagina ya abierta con
+    PyMuPDF, escalada a ``max_width`` de ancho manteniendo la relacion de
+    aspecto. Se reutiliza tanto en la vista previa con miniaturas como en
+    el panel de miniaturas permanente."""
+    if doc is None or not (0 <= page_index < doc.page_count):
+        return None
+    try:
+        page = doc[page_index]
+        zoom = max_width / max(page.rect.width, 1.0)
+        matrix = fitz.Matrix(zoom, zoom)
+        rendered = page.get_pixmap(matrix=matrix, alpha=False)
+        image = QImage(rendered.samples, rendered.width, rendered.height, rendered.stride, QImage.Format_RGB888)
+        return QPixmap.fromImage(image)
+    except Exception:  # noqa: BLE001 - una pagina irrenderizable no debe romper la miniatura
+        return None
+
+
 class AboutDialog(QDialog):
     """Panel de informacion ('Acerca de'): quien elaboro el programa y version."""
 
@@ -243,6 +261,32 @@ seleccionado(s) a otra seccion, sin quitarlo de la seccion actual.</li>
 </ul>
 <p>Con uno o varios documentos seleccionados, la tecla <b>Suprimir/Backspace</b>
 tambien los elimina directamente de la seccion.</p>
+
+<h3>5.5 Panel de miniaturas (a la derecha)</h3>
+<p>A la derecha del panel de documentos hay un panel fijo con una miniatura
+de la primera pagina de <b>cada documento del dossier completo</b> (de todas
+las secciones, no solo la seleccionada), en el mismo orden en que apareceran
+en el PDF final, con una barra de desplazamiento vertical para recorrerlas
+todas.</p>
+<ul>
+<li>Al hacer clic en una miniatura, se selecciona automaticamente su
+<b>seccion</b> en el arbol y su <b>documento</b> en la lista central (y al
+revés: seleccionar un documento en la lista central resalta su miniatura
+aqui, y elegir una seccion en el arbol desplaza el panel hasta el inicio de
+esa seccion). Es una seleccion en cascada: los tres paneles se mantienen
+sincronizados entre si.</li>
+<li><b>Clic derecho</b> sobre una miniatura abre un menu con las mismas
+acciones que el menu de la lista de documentos: Vista previa, Abrir
+documento, Abrir ubicacion, Tratamiento de firma, <b>+ Agregar
+documento(s) en esta seccion</b> y <b>Eliminar</b>, todas aplicadas al
+documento de la miniatura seleccionada, sin tener que ubicarlo antes a
+mano en el arbol o en la lista.</li>
+<li>La tecla <b>Suprimir/Backspace</b> con una miniatura seleccionada
+tambien elimina ese documento (con confirmacion), igual que en la lista de
+documentos.</li>
+<li>El panel se actualiza automaticamente cada vez que se agregan, mueven,
+reordenan o eliminan documentos, o se abre/genera un proyecto.</li>
+</ul>
 
 <h2>6. Historial de cambios (auditoria)</h2>
 <p>El boton <b>Historial de cambios</b> muestra una tabla con cada accion
@@ -986,14 +1030,6 @@ class DossierThumbnailPreviewDialog(QDialog):
         if not row.source_path or not Path(row.source_path).exists():
             return None
         doc = get_source_doc(row.source_path)
-        if doc is None or not (0 <= row.source_page_index < doc.page_count):
+        if doc is None:
             return None
-        try:
-            page = doc[row.source_page_index]
-            zoom = self._THUMB_WIDTH / max(page.rect.width, 1.0)
-            matrix = fitz.Matrix(zoom, zoom)
-            rendered = page.get_pixmap(matrix=matrix, alpha=False)
-            image = QImage(rendered.samples, rendered.width, rendered.height, rendered.stride, QImage.Format_RGB888)
-            return QPixmap.fromImage(image)
-        except Exception:  # noqa: BLE001 - una pagina irrenderizable no debe romper la vista previa
-            return None
+        return render_pdf_page_pixmap(doc, row.source_page_index, self._THUMB_WIDTH)

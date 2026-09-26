@@ -1,10 +1,11 @@
 """Widgets reutilizables de la interfaz principal."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon, QKeyEvent, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem
 
 from app.models.document_model import DocumentItem, DocumentStatus
@@ -119,6 +120,19 @@ class DocumentListWidget(QListWidget):
     def selected_document_ids(self) -> list[str]:
         return [item.data(Qt.UserRole) for item in self.selectedItems()]
 
+    def select_document(self, document_id: str) -> None:
+        """Selecciona el item cuyo documento coincida con ``document_id``
+        (usado para reflejar aqui la seleccion hecha desde el panel de
+        miniaturas)."""
+        self.clearSelection()
+        for i in range(self.count()):
+            item = self.item(i)
+            if item.data(Qt.UserRole) == document_id:
+                item.setSelected(True)
+                self.setCurrentItem(item)
+                self.scrollToItem(item)
+                return
+
 
 class SectionTreeWidget(QTreeWidget):
     """Arbol de secciones/subsecciones del dossier.
@@ -202,3 +216,90 @@ class SectionTreeWidget(QTreeWidget):
                 self.files_dropped_on_section.emit(section_id, paths)
                 return
         super().dropEvent(event)
+
+
+@dataclass
+class RailEntry:
+    """Una entrada del panel de miniaturas: un documento del dossier, con su
+    seccion y una imagen ya renderizada de su primera pagina (o ``None`` si
+    no se pudo generar)."""
+
+    document_id: str
+    section_id: str
+    caption: str
+    pixmap: Optional[QPixmap]
+
+
+class ThumbnailRailWidget(QListWidget):
+    """Panel lateral con una miniatura por cada documento del dossier, en su
+    orden final (agrupadas por seccion), con barra de desplazamiento
+    vertical. Al seleccionar una miniatura se avisa (``thumbnail_activated``)
+    con la seccion y el documento correspondientes, para que la ventana
+    principal sincronice el arbol de secciones y la lista de documentos --
+    y viceversa, para poder ubicar, borrar o agregar un documento sin tener
+    que buscarlo manualmente primero.
+    """
+
+    THUMB_WIDTH = 96
+    THUMB_HEIGHT = 128
+
+    thumbnail_activated = Signal(str, str)  # section_id, document_id
+    delete_requested = Signal()  # tecla Supr/Backspace con una miniatura seleccionada
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setViewMode(QListWidget.IconMode)
+        self.setFlow(QListWidget.TopToBottom)
+        self.setWrapping(False)
+        self.setMovement(QListWidget.Static)
+        self.setResizeMode(QListWidget.Adjust)
+        self.setIconSize(QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT))
+        self.setSpacing(8)
+        self.setWordWrap(True)
+        self.setUniformItemSizes(False)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setMinimumWidth(160)
+        self.setMaximumWidth(230)
+        self.currentItemChanged.connect(self._on_current_item_changed)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - nombre Qt
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.currentItem() is not None:
+            self.delete_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def load_entries(self, entries: list[RailEntry]) -> None:
+        self.clear()
+        for entry in entries:
+            item = QListWidgetItem(entry.caption)
+            item.setData(Qt.UserRole, entry.document_id)
+            item.setData(Qt.UserRole + 1, entry.section_id)
+            if entry.pixmap is not None:
+                item.setIcon(QIcon(entry.pixmap))
+            item.setTextAlignment(Qt.AlignHCenter)
+            self.addItem(item)
+
+    def _on_current_item_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
+        if current is None:
+            return
+        document_id = current.data(Qt.UserRole)
+        section_id = current.data(Qt.UserRole + 1)
+        if document_id and section_id:
+            self.thumbnail_activated.emit(section_id, document_id)
+
+    def select_document(self, section_id: str, document_id: str) -> None:
+        for i in range(self.count()):
+            item = self.item(i)
+            if item.data(Qt.UserRole) == document_id and item.data(Qt.UserRole + 1) == section_id:
+                self.setCurrentItem(item)
+                self.scrollToItem(item)
+                return
+
+    def scroll_to_section(self, section_id: str) -> None:
+        for i in range(self.count()):
+            item = self.item(i)
+            if item.data(Qt.UserRole + 1) == section_id:
+                self.scrollToItem(item)
+                return

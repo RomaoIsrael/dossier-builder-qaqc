@@ -507,6 +507,16 @@ página exacta tras las inserciones.
   panel de secciones, panel de documentos, metadatos, configuracion,
   preferencias, historial de cambios y el flujo completo de generacion del
   dossier), sin necesidad de salir del programa ni leer este README.
+- **Panel de miniaturas del dossier completo**: nuevo panel fijo a la
+  derecha del panel de documentos (`ThumbnailRailWidget`), con una miniatura
+  de la primera pagina de cada documento de **todas** las secciones, en el
+  orden final del dossier, con barra de desplazamiento vertical. Al
+  seleccionar una miniatura se sincroniza automaticamente la seccion (en el
+  arbol) y el documento (en la lista central) correspondientes, y viceversa
+  (seleccion en cascada entre los tres paneles). Desde el menu de clic
+  derecho de una miniatura (o con la tecla Suprimir) se puede eliminar ese
+  documento o agregar otro en la misma seccion, sin tener que ubicarlo antes
+  manualmente en el arbol.
 
 ## Roadmap / Fase 4
 

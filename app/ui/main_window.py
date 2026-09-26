@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import fitz  # PyMuPDF
 from PySide6.QtCore import QSize, QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
@@ -53,9 +54,10 @@ from app.ui.dialogs import (
     UserManualDialog,
     ValidationResultsDialog,
     flatten_section_options,
+    render_pdf_page_pixmap,
 )
 from app.ui.theme import apply_theme
-from app.ui.widgets import DocumentListWidget, SectionTreeWidget
+from app.ui.widgets import DocumentListWidget, RailEntry, SectionTreeWidget, ThumbnailRailWidget
 from app.utils.naming import render_naming_pattern
 
 logger = get_logger("ui.main_window")
@@ -112,6 +114,9 @@ class MainWindow(QMainWindow):
         self._generation_worker: Optional[GenerationWorker] = None
         self._progress_dialog: Optional[QProgressDialog] = None
         self._dirty = False  # True si hay cambios del proyecto sin guardar
+        # Evita bucles al sincronizar la seleccion entre el arbol de
+        # secciones, la lista de documentos y el panel de miniaturas.
+        self._syncing_selection = False
 
         self._build_toolbar()
         self._build_central_widget()
@@ -244,6 +249,7 @@ class MainWindow(QMainWindow):
         self.doc_list.files_dropped.connect(self._on_files_dropped_on_document_list)
         self.doc_list.customContextMenuRequested.connect(self._show_document_context_menu)
         self.doc_list.delete_requested.connect(self.remove_selected_documents)
+        self.doc_list.itemSelectionChanged.connect(self._on_document_selection_changed)
         center_layout.addWidget(self.doc_list, stretch=1)
 
         buttons_row1 = QHBoxLayout()
@@ -289,7 +295,22 @@ class MainWindow(QMainWindow):
         center_layout.addLayout(buttons_row3)
 
         splitter.addWidget(center)
-        splitter.setSizes([380, 900])
+
+        # -- Panel derecho: miniaturas de todo el dossier --------------------
+        thumb_container = QWidget()
+        thumb_layout = QVBoxLayout(thumb_container)
+        thumb_label = QLabel("Miniaturas del dossier")
+        thumb_label.setStyleSheet("font-weight: 600; padding: 4px 2px;")
+        thumb_layout.addWidget(thumb_label)
+
+        self.thumbnail_rail = ThumbnailRailWidget()
+        self.thumbnail_rail.thumbnail_activated.connect(self._on_thumbnail_activated)
+        self.thumbnail_rail.delete_requested.connect(self.remove_selected_documents)
+        self.thumbnail_rail.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
+        thumb_layout.addWidget(self.thumbnail_rail, stretch=1)
+
+        splitter.addWidget(thumb_container)
+        splitter.setSizes([320, 780, 200])
 
         self.setCentralWidget(splitter)
 
@@ -438,6 +459,8 @@ class MainWindow(QMainWindow):
     def _on_section_selected(self, section_id: str) -> None:
         self.current_section_id = section_id
         self._refresh_document_list()
+        if not self._syncing_selection:
+            self.thumbnail_rail.scroll_to_section(section_id)
 
     def add_subsection(self) -> None:
         if not self._require_project():
@@ -746,6 +769,119 @@ class MainWindow(QMainWindow):
         section.documents = new_order
         section_label = f"{section.numbering} {section.title}".strip()
         self._touch_project("Reordenar documentos", f"Nuevo orden en '{section_label}'")
+        self._refresh_thumbnail_rail()
+
+    # ------------------------------------------------------------------
+    # Panel de miniaturas (a la derecha): sincronizacion con seccion/documento
+    # ------------------------------------------------------------------
+    def _refresh_thumbnail_rail(self) -> None:
+        """Reconstruye el panel de miniaturas con una imagen por cada
+        documento del dossier, en su orden final. No incluye las paginas de
+        la plantilla (separadoras/caratula): solo los documentos que se
+        pueden borrar o reemplazar desde aqui."""
+        if not self.project or not self.project.template_path:
+            self.thumbnail_rail.clear()
+            return
+        try:
+            builder = DossierBuilder(self.project)
+            rows = builder.build_preview_outline()
+        except pdf_engine.PDFOpenError:
+            self.thumbnail_rail.clear()
+            return
+
+        section_by_doc_id = {
+            doc.id: section.id for section in self.project.iter_all_sections() for doc in section.documents
+        }
+
+        open_docs: dict[str, Optional[fitz.Document]] = {}
+
+        def get_source_doc(path: str) -> Optional[fitz.Document]:
+            if path not in open_docs:
+                try:
+                    open_docs[path] = fitz.open(path)
+                except Exception:  # noqa: BLE001 - un archivo movido/danado no debe romper el panel
+                    open_docs[path] = None
+            return open_docs[path]
+
+        entries: list[RailEntry] = []
+        for row in rows:
+            if row.kind != "doc" or not row.document_id:
+                continue
+            section_id = section_by_doc_id.get(row.document_id)
+            if section_id is None:
+                continue
+            pixmap = None
+            if row.source_path and Path(row.source_path).exists():
+                source_doc = get_source_doc(row.source_path)
+                if source_doc is not None:
+                    pixmap = render_pdf_page_pixmap(source_doc, row.source_page_index, ThumbnailRailWidget.THUMB_WIDTH)
+            caption = f"{row.section_label}\n{row.label}"
+            entries.append(
+                RailEntry(document_id=row.document_id, section_id=section_id, caption=caption, pixmap=pixmap)
+            )
+
+        for doc in open_docs.values():
+            if doc is not None:
+                doc.close()
+
+        self.thumbnail_rail.load_entries(entries)
+
+    def _on_thumbnail_activated(self, section_id: str, document_id: str) -> None:
+        """Una miniatura fue seleccionada: llevar el arbol de secciones y la
+        lista de documentos a esa misma seccion/documento (seleccion en
+        cascada)."""
+        if self._syncing_selection or self.project is None:
+            return
+        self._syncing_selection = True
+        try:
+            if section_id != self.current_section_id:
+                self.tree.select_section(section_id)
+            self.doc_list.select_document(document_id)
+        finally:
+            self._syncing_selection = False
+
+    def _on_document_selection_changed(self) -> None:
+        """Un documento fue seleccionado en la lista central: reflejar esa
+        misma seleccion en el panel de miniaturas."""
+        if self._syncing_selection:
+            return
+        ids = self.doc_list.selected_document_ids()
+        if len(ids) == 1 and self.current_section_id:
+            self._syncing_selection = True
+            try:
+                self.thumbnail_rail.select_document(self.current_section_id, ids[0])
+            finally:
+                self._syncing_selection = False
+
+    def _show_thumbnail_context_menu(self, pos) -> None:
+        item = self.thumbnail_rail.itemAt(pos)
+        if item is None:
+            return
+        if item is not self.thumbnail_rail.currentItem():
+            self.thumbnail_rail.setCurrentItem(item)
+
+        menu = QMenu(self)
+        menu.addAction("Vista previa", self.preview_selected_document)
+        menu.addAction("Abrir documento", self.open_selected_document_external)
+        menu.addAction("Abrir ubicacion", self.open_selected_document_folder)
+        menu.addSeparator()
+
+        treatment_menu = menu.addMenu("Tratamiento de firma")
+        treatment_menu.addAction(
+            "Conservar original", lambda: self._apply_treatment_to_selected(SignatureTreatment.KEEP_ORIGINAL)
+        )
+        treatment_menu.addAction(
+            "Aplanar para dossier", lambda: self._apply_treatment_to_selected(SignatureTreatment.FLATTEN)
+        )
+        treatment_menu.addAction(
+            "Automatico (segun deteccion de firma)", lambda: self._apply_treatment_to_selected(SignatureTreatment.AUTO)
+        )
+        menu.addSeparator()
+        menu.addAction("+ Agregar documento(s) en esta seccion", self.add_documents)
+        menu.addSeparator()
+        menu.addAction("Eliminar", self.remove_selected_documents)
+
+        menu.exec(self.thumbnail_rail.viewport().mapToGlobal(pos))
 
     def _move_selected(self, direction: int) -> None:
         section = self._current_section()
@@ -772,6 +908,7 @@ class MainWindow(QMainWindow):
         verb = "Subir" if direction < 0 else "Bajar"
         self._touch_project(f"{verb} documento", f"'{moved_doc.name}' en '{section_label}'")
         self._refresh_document_list()
+        self._refresh_thumbnail_rail()
 
     def remove_selected_documents(self) -> None:
         section = self._current_section()
@@ -1181,6 +1318,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Dossier Builder QA/QC")
             self.tree.clear()
             self.doc_list.clear()
+            self.thumbnail_rail.clear()
             self.section_label.setText("Cree o abra un proyecto para comenzar")
             self.statusBar().clearMessage()
             return
@@ -1188,6 +1326,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Dossier Builder QA/QC - {self.project.name}")
         self.tree.load_sections(self.project.sections)
         self._refresh_document_list()
+        self._refresh_thumbnail_rail()
 
         total_docs = self.project.total_documents()
         signed_docs = sum(
