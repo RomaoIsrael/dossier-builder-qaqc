@@ -224,6 +224,31 @@ Python instalado** en el equipo destino. Usa PyInstaller con
 `--collect-all PySide6` (para incluir los plugins de Qt, como las
 plataformas de ventana) y `--collect-submodules fitz`.
 
+## Generar un instalador (Setup.exe)
+
+El `.exe` de arriba es "portable" (se copia y se ejecuta directamente, sin
+instalación). Si en cambio se prefiere un instalador de verdad —con
+asistente, acceso directo en el Escritorio/Menú Inicio y un desinstalador en
+"Agregar o quitar programas"— se puede generar con
+[Inno Setup](https://jrsoftware.org/isdl.php) (gratuito, ~10 MB), usando el
+script `installer.iss` ya incluido en el proyecto.
+
+1. Instalar Inno Setup (una sola vez, en la computadora donde se compila).
+2. Correr `build_exe.bat` normalmente: si detecta que Inno Setup ya está
+   instalado, compila el instalador automáticamente después del `.exe`.
+   Si no lo detecta, no falla: solo deja el `.exe` portable y muestra el
+   enlace de descarga de Inno Setup.
+3. El instalador queda en
+   `installer_output\DossierBuilderQAQC_Setup.exe`.
+
+El instalador **no requiere permisos de administrador**: instala en la
+carpeta del usuario actual (`%LocalAppData%\Programs\DossierBuilderQAQC`),
+así que se puede usar en un equipo corporativo sin necesitar aprobación de
+TI para el paso de instalación en sí. La casilla para crear un acceso
+directo en el Escritorio aparece desmarcada por defecto (se puede activar
+durante la instalación); el acceso directo en el Menú Inicio y el
+desinstalador se crean siempre.
+
 ## Estructura de carpetas de salida (al generar un dossier)
 
 ```
