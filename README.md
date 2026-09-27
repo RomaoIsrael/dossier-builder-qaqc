@@ -590,6 +590,17 @@ página exacta tras las inserciones.
   hoja sin dejar rastro. Nuevo campo `DocumentItem.is_no_aplica_placeholder`
   y `AppSettings.default_no_aplica_template_path` para identificarla y
   recordar el archivo elegido.
+- **Fix: el panel de secciones se achicaba solo y no se podia volver a
+  ensanchar**: el titulo del panel central (`section_label`) no tenia
+  ajuste de linea (`setWordWrap`), asi que un titulo de seccion largo (ej.
+  "2.4 EQUIPO BES, CABLE ELECTRICO, PROTECTORES DE CABLE Y CONECTOR
+  ELECTRICO DE SUPERFICIE.") pedia un ancho de una sola linea enorme, y el
+  divisor entre paneles le quitaba ese espacio al arbol de secciones de la
+  izquierda, angostandolo. Se agrego `setWordWrap(True)` a ese titulo,
+  `setChildrenCollapsible(False)` en el divisor entre los tres paneles (para
+  que ninguno pueda quedar "atascado" en un ancho casi nulo) y un ancho
+  minimo fijo al panel de secciones, para que solo cambie de tamano cuando
+  el usuario arrastra el divisor a proposito.
 
 ## Roadmap / Fase 4
 

@@ -312,6 +312,10 @@ class MainWindow(QMainWindow):
 
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
+        # Que ningun panel se pueda "colapsar" arrastrando el separador (a
+        # veces quedaba practicamente en 0 de ancho y ya no se lo podia
+        # volver a ensanchar arrastrando).
+        splitter.setChildrenCollapsible(False)
 
         # -- Panel izquierdo: arbol de secciones ---------------------------
         self.tree = SectionTreeWidget()
@@ -319,6 +323,10 @@ class MainWindow(QMainWindow):
         self.tree.files_dropped_on_section.connect(self._on_files_dropped_on_section)
         self.tree.customContextMenuRequested.connect(self._show_section_context_menu)
         self.tree.delete_requested.connect(self.remove_section)
+        # Ancho minimo fijo: sin esto, el titulo de una seccion muy larga en
+        # el panel central podia forzar que este panel se achicara solo
+        # (ver nota en self.section_label mas abajo).
+        self.tree.setMinimumWidth(220)
         splitter.addWidget(self.tree)
 
         # -- Panel central: documentos de la seccion seleccionada -----------
@@ -327,6 +335,14 @@ class MainWindow(QMainWindow):
 
         self.section_label = QLabel("Seleccione una seccion")
         self.section_label.setStyleSheet("font-weight: 600; font-size: 13pt; padding: 4px 2px;")
+        # Titulos de seccion largos (ej. "2.4 EQUIPO BES, CABLE ELECTRICO,
+        # PROTECTORES DE CABLE Y CONECTOR ELECTRICO DE SUPERFICIE.") sin
+        # ajuste de linea forzaban a este QLabel a pedir un ancho enorme de
+        # una sola linea, y el splitter le quitaba ese espacio al panel de
+        # secciones (achicandolo solo, sin que se pudiera volver a
+        # ensanchar). Con ajuste de linea, el titulo pasa a varias lineas en
+        # vez de estirar el panel.
+        self.section_label.setWordWrap(True)
         center_layout.addWidget(self.section_label)
 
         self.doc_list = DocumentListWidget()
