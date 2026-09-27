@@ -1,8 +1,16 @@
 # assets
 
-Carpeta reservada para recursos estaticos de la aplicacion (icono `.ico`
-para el `.exe` generado con PyInstaller, iconos de la interfaz, etc.).
+Recursos estaticos de la aplicacion.
 
-Actualmente vacia: `build_exe.bat` no pasa `--icon` todavia. Para agregar
-un icono propio, coloque un archivo `icon.ico` aqui y agregue
-`--icon assets\icon.ico` al comando de `pyinstaller` en `build_exe.bat`.
+- `icon.ico`: icono de la aplicacion (16/32/48/256 px), usado por
+  `build_exe.bat` (`--icon` + `--add-data`, para el .exe generado con
+  PyInstaller) y por `app/main.py` (`app.setWindowIcon(...)`, para que
+  tambien aparezca en la barra de tareas y la barra de titulo al correr
+  desde el codigo fuente, no solo en el .exe compilado). Generado de forma
+  procedural (documento blanco con una insignia verde de "aprobado"), sin
+  depender de ningun archivo de imagen externo.
+- `icon_256.png`: la misma imagen suelta en PNG, por si se necesita en
+  otro contexto (ej. una pagina web).
+
+Para reemplazar el icono por uno propio, basta con sobreescribir
+`icon.ico` (multi-resolucion: 16, 32, 48 y 256 px) con el propio.

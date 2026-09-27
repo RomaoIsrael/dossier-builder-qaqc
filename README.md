@@ -630,6 +630,15 @@ página exacta tras las inserciones.
   ancha, liberando ese espacio para que el usuario ensanche el arbol de
   secciones o el panel de miniaturas a su gusto en cualquier tamano de
   ventana.
+- **Icono propio de la aplicacion**: `assets/icon.ico` (16/32/48/256 px),
+  generado de forma procedural (documento con una insignia verde de
+  "aprobado", en la misma paleta azul de la pantalla de bienvenida), sin
+  depender de Pillow ni de ningun archivo externo. `build_exe.bat` ahora
+  pasa `--icon assets\icon.ico` (icono del .exe en el Explorador de
+  Windows) y `--add-data` para que tambien este disponible en tiempo de
+  ejecucion; `app/main.py` lo carga con `app.setWindowIcon(...)` para que
+  aparezca en la barra de tareas y la barra de titulo tanto corriendo
+  desde el codigo fuente como ya compilado.
 
 ## Roadmap / Fase 4
 

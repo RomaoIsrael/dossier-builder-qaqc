@@ -18,6 +18,8 @@ if errorlevel 1 (
 echo Compilando DossierBuilderQAQC.exe ...
 pyinstaller --noconfirm --clean --onefile --windowed ^
     --name DossierBuilderQAQC ^
+    --icon assets\icon.ico ^
+    --add-data "assets\icon.ico;assets" ^
     --collect-all PySide6 ^
     --collect-submodules fitz ^
     main.py
