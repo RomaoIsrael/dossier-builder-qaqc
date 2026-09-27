@@ -229,7 +229,10 @@ la elimina directamente (con confirmacion).</p>
 <p>Lista los documentos PDF que pertenecen a la seccion seleccionada en el
 arbol. Se pueden arrastrar y soltar archivos PDF directamente desde el
 explorador de Windows sobre esta lista (o sobre una seccion del arbol) para
-agregarlos sin usar los botones.</p>
+agregarlos sin usar los botones. Si la ventana no esta maximizada y no
+entran todos los botones de una fila, esa fila se puede desplazar
+horizontalmente (con la rueda del mouse manteniendo Shift, o arrastrando
+con el touchpad) en vez de ocultar botones o achicar los demas paneles.</p>
 
 <h3>5.1 Botones (fila 1)</h3>
 <ul>

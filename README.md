@@ -615,6 +615,21 @@ página exacta tras las inserciones.
   paneles dejen de verse bien. El panel de miniaturas sigue sin tener un
   ancho maximo: se puede arrastrar el divisor para agrandarlo tanto como
   se necesite.
+- **Fix (raiz real del problema anterior): el panel de miniaturas seguia
+  sin poder ensancharse en una ventana no maximizada**: las tres filas de
+  botones del panel central (documentos/subseccion/NO APLICA, subir/bajar/
+  eliminar/vista previa/tratamiento de firma, abrir documento/ubicacion)
+  estaban en un `QHBoxLayout` normal, cuya suma de anchos minimos (5
+  botones con texto largo) imponia un ancho minimo enorme a todo el panel
+  central -- eso, aunque invisible, era lo que en realidad le dejaba muy
+  poco espacio disponible al arbol de secciones y al panel de miniaturas
+  para poder agrandarse, sin importar la ventana. Ahora cada fila de
+  botones va dentro de un `QScrollArea` horizontal (`_wrap_button_row`):
+  si no entran todos los botones, aparece una barra de desplazamiento en
+  esa fila en particular en vez de forzar que toda la ventana sea mas
+  ancha, liberando ese espacio para que el usuario ensanche el arbol de
+  secciones o el panel de miniaturas a su gusto en cualquier tamano de
+  ventana.
 
 ## Roadmap / Fase 4
 

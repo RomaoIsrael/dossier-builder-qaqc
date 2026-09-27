@@ -13,6 +13,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QProgressDialog,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSplitter,
     QStatusBar,
@@ -314,6 +316,29 @@ class MainWindow(QMainWindow):
         add_action(toolbar_bottom, "Validar dossier", self.validate_dossier, QStyle.SP_DialogApplyButton)
         self.generate_action = add_action(toolbar_bottom, "Generar dossier", self.generate_dossier, QStyle.SP_MediaPlay)
 
+    def _wrap_button_row(self, row: QHBoxLayout) -> QScrollArea:
+        """Envuelve una fila de botones en un area con scroll horizontal.
+
+        Sin esto, una fila con varios botones (ej. 5 botones de seccion)
+        obliga a todo el panel central a pedir un ancho minimo grande (la
+        suma del ancho de cada boton), lo que en una ventana no maximizada
+        le dejaba muy poco espacio disponible al panel de secciones y al de
+        miniaturas para poder ensancharse a gusto del usuario. Con la fila
+        de botones dentro de un area con scroll, su ancho minimo deja de
+        "contagiarse" hacia arriba: si no entran todos los botones, aparece
+        una barra de desplazamiento horizontal en esa fila en vez de forzar
+        que toda la ventana sea mas ancha."""
+        container = QWidget()
+        container.setLayout(row)
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFixedHeight(container.sizeHint().height() + 6)
+        return scroll
+
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
         # Que ningun panel se pueda "colapsar" arrastrando el separador (a
@@ -379,7 +404,7 @@ class MainWindow(QMainWindow):
         buttons_row1.addWidget(self.btn_add_subsection)
         buttons_row1.addWidget(self.btn_no_aplica)
         buttons_row1.addWidget(self.btn_remove_section)
-        center_layout.addLayout(buttons_row1)
+        center_layout.addWidget(self._wrap_button_row(buttons_row1))
 
         buttons_row2 = QHBoxLayout()
         self.btn_move_up = QPushButton("Subir")
@@ -397,7 +422,7 @@ class MainWindow(QMainWindow):
         buttons_row2.addWidget(self.btn_remove)
         buttons_row2.addWidget(self.btn_preview)
         buttons_row2.addWidget(self.btn_treatment)
-        center_layout.addLayout(buttons_row2)
+        center_layout.addWidget(self._wrap_button_row(buttons_row2))
 
         buttons_row3 = QHBoxLayout()
         self.btn_open_external = QPushButton("Abrir documento")
@@ -406,7 +431,7 @@ class MainWindow(QMainWindow):
         self.btn_open_folder.clicked.connect(self.open_selected_document_folder)
         buttons_row3.addWidget(self.btn_open_external)
         buttons_row3.addWidget(self.btn_open_folder)
-        center_layout.addLayout(buttons_row3)
+        center_layout.addWidget(self._wrap_button_row(buttons_row3))
 
         splitter.addWidget(center)
 
