@@ -601,6 +601,20 @@ página exacta tras las inserciones.
   que ninguno pueda quedar "atascado" en un ancho casi nulo) y un ancho
   minimo fijo al panel de secciones, para que solo cambie de tamano cuando
   el usuario arrastra el divisor a proposito.
+- **El panel de miniaturas se veia demasiado angosto con la ventana no
+  maximizada**: al achicar la ventana, el divisor repartia el espacio que
+  faltaba entre los tres paneles casi por igual, asi que el panel de
+  secciones y el de miniaturas terminaban aplastados junto con el central.
+  Ahora el divisor tiene factores de estiramiento (`setStretchFactor`) que
+  hacen que, al agrandar o achicar la ventana, sea el **panel central**
+  (la lista de documentos, que ya tiene su propia barra de desplazamiento)
+  el que absorbe ese cambio, mientras el arbol de secciones y el panel de
+  miniaturas mantienen su ancho. Ademas se subio el ancho minimo del panel
+  de miniaturas (150 -> 220px) y se le puso un tamano minimo a toda la
+  ventana (1000x650) para que nunca se pueda achicar tanto que los tres
+  paneles dejen de verse bien. El panel de miniaturas sigue sin tener un
+  ancho maximo: se puede arrastrar el divisor para agrandarlo tanto como
+  se necesite.
 
 ## Roadmap / Fase 4
 

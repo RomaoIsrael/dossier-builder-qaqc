@@ -177,6 +177,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Dossier Builder QA/QC")
         self.resize(1280, 820)
+        # Con la ventana mas chica que esto, los tres paneles (secciones,
+        # documentos, miniaturas) ya no entran con un ancho legible; mejor
+        # no dejar achicar tanto la ventana que deje de verse bien.
+        self.setMinimumSize(1000, 650)
 
         self.database = DatabaseService()
         self.project_service = ProjectService(database=self.database)
@@ -453,7 +457,15 @@ class MainWindow(QMainWindow):
         thumb_layout.addWidget(self.thumbnail_rail, stretch=1)
 
         splitter.addWidget(thumb_container)
-        splitter.setSizes([320, 780, 220])
+        splitter.setSizes([320, 780, 260])
+        # Al agrandar o achicar la ventana, que el panel central (la lista
+        # de documentos, que ya tiene su propia barra de desplazamiento) sea
+        # el que absorbe ese cambio de espacio, y no el arbol de secciones
+        # ni el panel de miniaturas -- asi estos dos mantienen un ancho
+        # utilizable en vez de terminar aplastados en una ventana chica.
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
 
         self.setCentralWidget(splitter)
 

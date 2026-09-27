@@ -316,9 +316,13 @@ de la miniatura seleccionada y M el total de hojas de todo el dossier
 cualquier miniatura.</li>
 <li><b>Tamano de las miniaturas</b>: el control deslizante "Tamano" arriba
 del panel agranda o achica las miniaturas al gusto (o segun el espacio
-disponible en la pantalla); el panel tambien se puede ensanchar arrastrando
-el borde que lo separa del panel de documentos. La preferencia de tamano
-se recuerda para la proxima vez que se abra el programa.</li>
+disponible en la pantalla); el panel tambien se puede ensanchar (sin
+limite) arrastrando el borde que lo separa del panel de documentos, tanto
+con la ventana maximizada como no. La preferencia de tamano se recuerda
+para la proxima vez que se abra el programa. Al agrandar o achicar la
+ventana, es el panel de documentos (el del medio) el que se ajusta primero;
+el arbol de secciones y el panel de miniaturas mantienen su ancho para
+seguir siendo legibles.</li>
 <li>Al hacer clic en una miniatura de un documento, se selecciona
 automaticamente su <b>seccion</b> en el arbol y su <b>documento</b> en la
 lista central (y al revés: seleccionar un documento en la lista central

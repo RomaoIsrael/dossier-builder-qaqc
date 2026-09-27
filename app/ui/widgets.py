@@ -282,7 +282,7 @@ class ThumbnailRailWidget(QListWidget):
         self.setUniformItemSizes(False)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.setMinimumWidth(150)
+        self.setMinimumWidth(220)
         self.set_thumbnail_zoom(self.DEFAULT_ZOOM)
         self.currentItemChanged.connect(self._on_current_item_changed)
 
