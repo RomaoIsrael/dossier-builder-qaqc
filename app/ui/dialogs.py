@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -46,11 +47,13 @@ APP_AUTHOR_NAME = "Romao Israel Landázuri Balseca"
 APP_AUTHOR_COUNTRY = "Ecuador"
 
 
-def render_pdf_page_pixmap(doc: fitz.Document, page_index: int, max_width: int) -> Optional[QPixmap]:
-    """Renderiza una miniatura (QPixmap) de una pagina ya abierta con
+def render_pdf_page_image(doc: fitz.Document, page_index: int, max_width: int) -> Optional[QImage]:
+    """Renderiza una miniatura (QImage) de una pagina ya abierta con
     PyMuPDF, escalada a ``max_width`` de ancho manteniendo la relacion de
-    aspecto. Se reutiliza tanto en la vista previa con miniaturas como en
-    el panel de miniaturas permanente."""
+    aspecto. QImage (a diferencia de QPixmap) se puede crear de forma segura
+    desde un hilo de fondo, asi que esta es la funcion que debe usarse
+    dentro de un ``QThread`` (ver ``ThumbnailRailWorker``); QPixmap.fromImage
+    se hace despues, ya de vuelta en el hilo principal."""
     if doc is None or not (0 <= page_index < doc.page_count):
         return None
     try:
@@ -59,9 +62,16 @@ def render_pdf_page_pixmap(doc: fitz.Document, page_index: int, max_width: int) 
         matrix = fitz.Matrix(zoom, zoom)
         rendered = page.get_pixmap(matrix=matrix, alpha=False)
         image = QImage(rendered.samples, rendered.width, rendered.height, rendered.stride, QImage.Format_RGB888)
-        return QPixmap.fromImage(image)
+        return image.copy()  # copy(): que la imagen no dependa de la memoria de `rendered`, que se libera al salir
     except Exception:  # noqa: BLE001 - una pagina irrenderizable no debe romper la miniatura
         return None
+
+
+def render_pdf_page_pixmap(doc: fitz.Document, page_index: int, max_width: int) -> Optional[QPixmap]:
+    """Igual que ``render_pdf_page_image``, pero ya convertido a QPixmap.
+    Solo debe llamarse desde el hilo principal (de interfaz)."""
+    image = render_pdf_page_image(doc, page_index, max_width)
+    return QPixmap.fromImage(image) if image is not None else None
 
 
 class AboutDialog(QDialog):
@@ -137,6 +147,14 @@ el explorador de archivos, para que se sepa que hay que seleccionar el PDF
 base.</li>
 <li><b>Abrir proyecto</b>: abre un archivo <code>.dossierproj</code> guardado
 previamente (propio o de otra persona/computadora).</li>
+<li><b>Proyectos recientes</b>: junto a "Abrir proyecto", este boton muestra
+un menu desplegable con los ultimos proyectos abiertos o guardados (hasta
+10), para reabrirlos con un clic sin tener que buscarlos en el explorador
+de archivos. El proyecto que esta abierto en este momento aparece marcado
+con "&lt;- proyecto actual", asi se puede confirmar rapidamente en cual se
+esta trabajando; un proyecto cuyo archivo ya no se encuentra en el disco
+aparece deshabilitado con "(no encontrado)". Al final del menu hay una
+opcion para limpiar todo el historial.</li>
 <li><b>Guardar</b>: guarda los cambios en el mismo archivo del proyecto
 actual. Si el proyecto es nuevo y nunca se guardo, se comporta como
 &quot;Guardar como...&quot;.</li>
@@ -221,6 +239,20 @@ seleccionar uno o varios PDF y agregarlos a la seccion actual.</li>
 encuentre dentro de una carpeta seleccionada.</li>
 <li><b>+ Agregar subseccion</b>: igual que la opcion del menu de clic
 derecho del arbol, pero accesible desde este panel.</li>
+<li><b>NO APLICA</b>: boton de casilla (queda presionado/marcado) para las
+secciones o subsecciones que no tienen contenido que aplique (por ejemplo,
+"2.4 EQUIPO BES" cuando el pozo no usa BES). Al marcarlo, se agrega
+automaticamente una hoja generica que dice "NO APLICA" como contenido de
+esa seccion, sin tener que buscar ni insertar ese PDF a mano. La primera
+vez que se usa, pide elegir el archivo PDF de esa hoja (una sola pagina) y
+ofrece recordarlo como el predeterminado para la proxima vez (tambien se
+puede configurar desde <b>Preferencias</b>, ver seccion 9). Es totalmente
+<b>reversible</b>: si se marco por error, basta con volver a hacer clic en
+el mismo boton para desmarcarlo, y la hoja "NO APLICA" se quita de la
+seccion sin dejar rastro (tambien se puede lograr lo mismo eliminando esa
+hoja desde la lista de documentos, como cualquier otra). La seccion
+marcada muestra la etiqueta "[NO APLICA]" en el arbol de la izquierda, y el
+documento en si aparece con la etiqueta "NO APLICA" en la lista central.</li>
 <li><b>Eliminar seccion</b>: elimina la seccion actualmente seleccionada.</li>
 </ul>
 
@@ -380,7 +412,10 @@ seccion con su pagina de inicio.</li>
 arrancara cada proyecto nuevo: DPI de aplanado, calidad JPEG, patron de
 nombre y carpeta de salida. Cambiar estos valores no afecta proyectos ya
 existentes, solo a los que se creen despues (o hasta que se cambien
-manualmente en &quot;Configuracion&quot;).</p>
+manualmente en &quot;Configuracion&quot;). Tambien esta aqui la <b>pagina
+'NO APLICA' predeterminada</b>: el PDF de una sola hoja que se usa cada vez
+que se marca una seccion como "NO APLICA" (ver seccion 5.1); se puede
+elegir o cambiar en cualquier momento con el boton "Examinar...".</p>
 
 <h2>10. Generar el dossier, paso a paso</h2>
 <ol>
@@ -423,6 +458,13 @@ correr una generacion completa innecesariamente.</li>
 <li>El <b>Historial de cambios</b> es la forma mas rapida de saber que hizo
 cada persona que trabajo en el proyecto, especialmente cuando varias
 personas lo editan desde distintas computadoras.</li>
+<li>Si al agregar varios documentos a la vez la ventana tarda un momento en
+responder, es normal: abajo, en la barra de estado, se muestra "Agregando
+documentos... (N/M)" mientras tanto. El panel de miniaturas tambien muestra
+una <b>barra de progreso</b> delgada arriba de las miniaturas mientras las
+esta generando en segundo plano; el resto de la aplicacion se puede seguir
+usando normalmente durante ese tiempo, no hace falta esperar a que
+termine.</li>
 </ul>
 """
 
@@ -671,6 +713,22 @@ class PreferencesDialog(QDialog):
         self.output_dir_edit = QLineEdit(settings.default_output_dir)
         form.addRow("Carpeta de salida por defecto", self.output_dir_edit)
 
+        no_aplica_row = QHBoxLayout()
+        self.no_aplica_path_edit = QLineEdit(settings.default_no_aplica_template_path)
+        self.no_aplica_path_edit.setPlaceholderText("(ninguno elegido todavia)")
+        btn_browse_no_aplica = QPushButton("Examinar...")
+        btn_browse_no_aplica.clicked.connect(self._browse_no_aplica_template)
+        no_aplica_row.addWidget(self.no_aplica_path_edit, stretch=1)
+        no_aplica_row.addWidget(btn_browse_no_aplica)
+        form.addRow("Pagina 'NO APLICA' predeterminada", no_aplica_row)
+        form.addRow(
+            "",
+            QLabel(
+                "PDF de una sola pagina que se inserta al marcar una seccion como 'NO APLICA'.\n"
+                "Se puede elegir aqui, o la primera vez que se use el boton 'NO APLICA'."
+            ),
+        )
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -679,12 +737,20 @@ class PreferencesDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
+    def _browse_no_aplica_template(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Elegir PDF para las paginas 'NO APLICA'", "", "Archivos PDF (*.pdf)"
+        )
+        if path:
+            self.no_aplica_path_edit.setText(path)
+
     def apply_to(self, settings: AppSettings) -> AppSettings:
         settings.theme = self.theme_combo.currentData()
         settings.default_flatten_dpi = int(self.dpi_combo.currentText())
         settings.default_flatten_jpeg_quality = self.jpeg_quality_spin.value()
         settings.default_naming_pattern = self.naming_edit.text() or settings.default_naming_pattern
         settings.default_output_dir = self.output_dir_edit.text()
+        settings.default_no_aplica_template_path = self.no_aplica_path_edit.text()
         return settings
 
 

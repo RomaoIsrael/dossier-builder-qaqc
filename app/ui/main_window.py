@@ -9,7 +9,7 @@ from typing import Optional
 
 import fitz  # PyMuPDF
 from PySide6.QtCore import QSize, QThread, QUrl, Qt, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QSlider,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QStyle,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -55,7 +57,7 @@ from app.ui.dialogs import (
     UserManualDialog,
     ValidationResultsDialog,
     flatten_section_options,
-    render_pdf_page_pixmap,
+    render_pdf_page_image,
 )
 from app.ui.theme import apply_theme
 from app.ui.widgets import DocumentListWidget, RailEntry, SectionTreeWidget, ThumbnailRailWidget
@@ -100,6 +102,76 @@ class GenerationWorker(QThread):
             self.failed.emit(f"Error inesperado: {exc}")
 
 
+class ThumbnailRailWorker(QThread):
+    """Renderiza en un hilo aparte todas las miniaturas del panel lateral,
+    para no congelar la interfaz mientras se abren y rasterizan los PDF.
+
+    Recibe ``specs`` ya armados por la ventana principal (rutas de archivo,
+    ids, textos -- datos inmutables de solo lectura) en vez de una
+    referencia viva al proyecto: asi el hilo de fondo nunca toca el modelo
+    del proyecto mientras el usuario lo sigue editando desde la interfaz.
+    Usa ``QImage`` (seguro entre hilos) en vez de ``QPixmap`` (que solo debe
+    crearse en el hilo principal); la conversion final a QPixmap la hace
+    quien reciba la señal ``finished_ok``.
+    """
+
+    finished_ok = Signal(list)
+
+    def __init__(self, specs: list[tuple], render_width: int):
+        super().__init__()
+        self._specs = specs
+        self._render_width = render_width
+
+    def run(self) -> None:  # noqa: D102 - metodo estandar de QThread
+        rendered: list[tuple] = []
+        template_doc: Optional[fitz.Document] = None
+        template_open_failed = False
+
+        for spec in self._specs:
+            kind = spec[0]
+            if kind == "template":
+                _, template_path, page_index = spec
+                if template_doc is None and not template_open_failed and template_path:
+                    try:
+                        template_doc = fitz.open(template_path)
+                    except Exception:  # noqa: BLE001 - una plantilla danada no debe romper el panel
+                        template_open_failed = True
+                image = None
+                if template_doc is not None:
+                    image = render_pdf_page_image(template_doc, page_index, self._render_width)
+                rendered.append((None, None, page_index, f"Plantilla\nPagina {page_index + 1}", image, False))
+            elif kind == "doc":
+                _, document_id, section_id, section_label, name, source_path, excluded = spec
+                if not source_path or not Path(source_path).exists():
+                    caption = f"{section_label}\n{name}\n(archivo no disponible)"
+                    rendered.append((document_id, section_id, 0, caption, None, False))
+                    continue
+                try:
+                    source_doc = fitz.open(source_path)
+                except Exception:  # noqa: BLE001 - un archivo danado no debe romper el panel
+                    caption = f"{section_label}\n{name}\n(no se pudo abrir)"
+                    rendered.append((document_id, section_id, 0, caption, None, False))
+                    continue
+                try:
+                    total_pages = source_doc.page_count
+                    for page_index in range(total_pages):
+                        is_excluded = page_index in excluded
+                        image = render_pdf_page_image(source_doc, page_index, self._render_width)
+                        caption = f"{section_label}\n{name}"
+                        if total_pages > 1:
+                            caption += f"\nHoja {page_index + 1} de {total_pages}"
+                        if is_excluded:
+                            caption += "\n(excluida del dossier)"
+                        rendered.append((document_id, section_id, page_index, caption, image, is_excluded))
+                finally:
+                    source_doc.close()
+
+        if template_doc is not None:
+            template_doc.close()
+
+        self.finished_ok.emit(rendered)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -118,6 +190,7 @@ class MainWindow(QMainWindow):
         # Evita bucles al sincronizar la seleccion entre el arbol de
         # secciones, la lista de documentos y el panel de miniaturas.
         self._syncing_selection = False
+        self._thumbnail_worker: Optional[ThumbnailRailWorker] = None
 
         self._build_toolbar()
         self._build_central_widget()
@@ -206,6 +279,18 @@ class MainWindow(QMainWindow):
         # Fila 1: gestion del proyecto (archivo, metadatos, configuracion).
         add_action(toolbar_top, "Nuevo proyecto", self.new_project, QStyle.SP_FileIcon)
         add_action(toolbar_top, "Abrir proyecto", self.open_project, QStyle.SP_DialogOpenButton)
+
+        self.recent_projects_menu = QMenu(self)
+        self.recent_projects_menu.aboutToShow.connect(self._populate_recent_projects_menu)
+        recent_button = QToolButton()
+        recent_button.setText("Proyectos recientes")
+        recent_button.setToolTip("Ver y abrir proyectos usados recientemente")
+        recent_button.setIcon(style.standardIcon(QStyle.SP_DirOpenIcon))
+        recent_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        recent_button.setPopupMode(QToolButton.InstantPopup)
+        recent_button.setMenu(self.recent_projects_menu)
+        toolbar_top.addWidget(recent_button)
+
         add_action(toolbar_top, "Guardar", self.save_project, QStyle.SP_DialogSaveButton)
         add_action(toolbar_top, "Guardar como...", self.save_project_as, QStyle.SP_DriveFDIcon)
         toolbar_top.addSeparator()
@@ -260,11 +345,19 @@ class MainWindow(QMainWindow):
         self.btn_add_folder.clicked.connect(self.add_documents_from_folder)
         self.btn_add_subsection = QPushButton("+ Agregar subseccion")
         self.btn_add_subsection.clicked.connect(self.add_subsection)
+        self.btn_no_aplica = QPushButton("NO APLICA")
+        self.btn_no_aplica.setCheckable(True)
+        self.btn_no_aplica.setToolTip(
+            "Marcar esta seccion/subseccion como 'No aplica': se agrega una hoja generica que lo "
+            "indica. Se puede desmarcar en cualquier momento para revertirlo."
+        )
+        self.btn_no_aplica.toggled.connect(self._on_no_aplica_toggled)
         self.btn_remove_section = QPushButton("Eliminar seccion")
         self.btn_remove_section.clicked.connect(self.remove_section)
         buttons_row1.addWidget(self.btn_add_docs)
         buttons_row1.addWidget(self.btn_add_folder)
         buttons_row1.addWidget(self.btn_add_subsection)
+        buttons_row1.addWidget(self.btn_no_aplica)
         buttons_row1.addWidget(self.btn_remove_section)
         center_layout.addLayout(buttons_row1)
 
@@ -320,6 +413,16 @@ class MainWindow(QMainWindow):
         self.thumbnail_position_label.setAlignment(Qt.AlignCenter)
         self.thumbnail_position_label.setStyleSheet("color: palette(mid); font-size: 9pt; padding: 0 2px 4px 2px;")
         thumb_layout.addWidget(self.thumbnail_position_label)
+
+        # Barra de progreso indeterminada: se muestra mientras el hilo de
+        # fondo esta renderizando las miniaturas, para que quede claro que
+        # el programa esta trabajando y no que se congelo.
+        self.thumbnail_busy_bar = QProgressBar()
+        self.thumbnail_busy_bar.setRange(0, 0)
+        self.thumbnail_busy_bar.setTextVisible(False)
+        self.thumbnail_busy_bar.setFixedHeight(4)
+        self.thumbnail_busy_bar.setVisible(False)
+        thumb_layout.addWidget(self.thumbnail_busy_bar)
 
         self.thumbnail_rail = ThumbnailRailWidget()
         initial_zoom = self.settings_service.settings.thumbnail_rail_zoom or ThumbnailRailWidget.DEFAULT_ZOOM
@@ -399,6 +502,9 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self._open_project_path(path)
+
+    def _open_project_path(self, path: str) -> None:
         try:
             self.project = self.project_service.open(path)
         except ProjectError as exc:
@@ -408,6 +514,50 @@ class MainWindow(QMainWindow):
         self.current_section_id = None
         self._dirty = False
         self._refresh_ui()
+
+    def _populate_recent_projects_menu(self) -> None:
+        """Reconstruye el menu "Proyectos recientes" cada vez que se va a
+        mostrar, para que siempre refleje la lista actual y marque cual es
+        el proyecto abierto ahora mismo (si esta entre los recientes)."""
+        menu = self.recent_projects_menu
+        menu.clear()
+        recents = self.settings_service.settings.recent_projects
+        if not recents:
+            action = menu.addAction("(No hay proyectos recientes)")
+            action.setEnabled(False)
+            return
+
+        current_path = None
+        if self.project and self.project.project_file_path:
+            current_path = str(Path(self.project.project_file_path).resolve())
+
+        for path in recents:
+            exists = Path(path).exists()
+            label = Path(path).stem
+            if current_path and exists and str(Path(path).resolve()) == current_path:
+                label += "  <- proyecto actual"
+            if not exists:
+                label += "  (no encontrado)"
+            action = menu.addAction(label)
+            action.setEnabled(exists)
+            action.setToolTip(path)
+            action.triggered.connect(lambda checked=False, p=path: self._open_recent_project(p))
+
+        menu.addSeparator()
+        clear_action = menu.addAction("Limpiar historial")
+        clear_action.triggered.connect(self._clear_recent_projects)
+
+    def _open_recent_project(self, path: str) -> None:
+        if not Path(path).exists():
+            QMessageBox.warning(
+                self, "Proyectos recientes", f"No se encontro el archivo:\n{path}"
+            )
+            return
+        self._open_project_path(path)
+
+    def _clear_recent_projects(self) -> None:
+        self.settings_service.settings.recent_projects = []
+        self.settings_service.save()
 
     def save_project(self) -> None:
         if not self._require_project():
@@ -516,6 +666,78 @@ class MainWindow(QMainWindow):
         self._refresh_ui()
         self.tree.select_section(child.id)
 
+    def _resolve_no_aplica_template_path(self) -> Optional[str]:
+        """Devuelve la ruta del PDF a usar para las hojas 'NO APLICA'. Si no
+        hay una predeterminada (o el archivo ya no existe), pide elegir uno
+        y ofrece recordarlo para la proxima vez."""
+        configured = self.settings_service.settings.default_no_aplica_template_path
+        if configured and Path(configured).exists():
+            return configured
+
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Elegir PDF para las paginas 'NO APLICA'", "", "Archivos PDF (*.pdf)"
+        )
+        if not chosen:
+            return None
+
+        remember = QMessageBox.question(
+            self,
+            "Pagina 'NO APLICA'",
+            "¿Usar este archivo como pagina 'NO APLICA' predeterminada para futuras secciones "
+            "(en este proyecto y en los nuevos)?",
+        )
+        if remember == QMessageBox.Yes:
+            self.settings_service.settings.default_no_aplica_template_path = chosen
+            self.settings_service.save()
+        return chosen
+
+    def _on_no_aplica_toggled(self, checked: bool) -> None:
+        section = self._current_section()
+        if section is None:
+            self.btn_no_aplica.blockSignals(True)
+            self.btn_no_aplica.setChecked(False)
+            self.btn_no_aplica.blockSignals(False)
+            if checked:
+                QMessageBox.information(self, "NO APLICA", "Seleccione primero una seccion.")
+            return
+        if checked:
+            self._mark_section_no_aplica(section)
+        else:
+            self._unmark_section_no_aplica(section)
+
+    def _mark_section_no_aplica(self, section: SectionNode) -> None:
+        if any(d.is_no_aplica_placeholder for d in section.documents):
+            return  # ya estaba marcada
+        template_path = self._resolve_no_aplica_template_path()
+        if not template_path:
+            self._refresh_document_list()  # revierte el boton (el usuario cancelo la eleccion del PDF)
+            return
+
+        doc = DocumentItem(
+            source_path=template_path,
+            display_name="NO APLICA.pdf",
+            signature_treatment=SignatureTreatment.KEEP_ORIGINAL,
+            is_no_aplica_placeholder=True,
+            order=len(section.documents),
+        )
+        self._inspect_document(doc)
+        section.documents.append(doc)
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Marcar 'No aplica'", f"Seccion '{section_label}'")
+        self._refresh_ui()
+        self.tree.select_section(section.id)
+
+    def _unmark_section_no_aplica(self, section: SectionNode) -> None:
+        if not any(d.is_no_aplica_placeholder for d in section.documents):
+            return
+        section.documents = [d for d in section.documents if not d.is_no_aplica_placeholder]
+        for index, doc in enumerate(section.documents):
+            doc.order = index
+        section_label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Quitar marca 'No aplica'", f"Seccion '{section_label}'")
+        self._refresh_ui()
+        self.tree.select_section(section.id)
+
     def remove_section(self) -> None:
         if not self._require_project():
             return
@@ -589,11 +811,28 @@ class MainWindow(QMainWindow):
         firma) y lo agrega al final de ``section``. Devuelve cuantos se
         agregaron. No toca el proyecto ni refresca la UI: eso queda a
         cargo del llamador, para poder agrupar varias inserciones.
+
+        Inspeccionar cada PDF (abrirlo, contar paginas, detectar firmas)
+        puede tardar un momento con archivos grandes o muchos a la vez; para
+        que no parezca que el programa se congelo, se muestra un cursor de
+        espera y un mensaje de progreso en la barra de estado (con varios
+        documentos), procesando eventos de la interfaz entre uno y otro.
         """
-        for path in paths:
-            doc = DocumentItem(source_path=path, order=len(section.documents))
-            self._inspect_document(doc)
-            section.documents.append(doc)
+        total = len(paths)
+        show_progress = total > 2
+        if show_progress:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for index, path in enumerate(paths, start=1):
+                if show_progress:
+                    self.statusBar().showMessage(f"Agregando documentos... ({index}/{total})")
+                    QApplication.processEvents()
+                doc = DocumentItem(source_path=path, order=len(section.documents))
+                self._inspect_document(doc)
+                section.documents.append(doc)
+        finally:
+            if show_progress:
+                QApplication.restoreOverrideCursor()
         return len(paths)
 
     def add_documents(self) -> None:
@@ -777,10 +1016,16 @@ class MainWindow(QMainWindow):
         if section is None:
             self.section_label.setText("Seleccione una seccion")
             self.doc_list.clear()
+            self.btn_no_aplica.blockSignals(True)
+            self.btn_no_aplica.setChecked(False)
+            self.btn_no_aplica.blockSignals(False)
             return
         label = f"{section.numbering} {section.title}".strip()
         self.section_label.setText(f"{label}  ({len(section.documents)} documento(s))")
         self.doc_list.load_documents(section.documents)
+        self.btn_no_aplica.blockSignals(True)
+        self.btn_no_aplica.setChecked(any(d.is_no_aplica_placeholder for d in section.documents))
+        self.btn_no_aplica.blockSignals(False)
 
     def _on_documents_reordered(self) -> None:
         section = self._current_section()
@@ -818,61 +1063,99 @@ class MainWindow(QMainWindow):
         hoja de cada documento (un documento de varias paginas aparece como
         varias miniaturas consecutivas). Asi el total que se muestra aqui
         coincide con el del dossier final, y se puede ver el archivo
-        completo, no solo los documentos agregados."""
-        if not self.project or not self.project.template_path:
+        completo, no solo los documentos agregados.
+
+        El renderizado (abrir cada PDF y rasterizar cada pagina) se hace en
+        un hilo aparte (``ThumbnailRailWorker``) para no congelar la
+        interfaz: aqui solo se arma la lista de "que hay que renderizar"
+        (rapido, sin abrir archivos de documentos) y se lanza el hilo.
+        """
+        specs = self._build_rail_specs()
+        if not specs:
+            self._cancel_thumbnail_worker()
             self.thumbnail_rail.clear()
             self._update_thumbnail_position_label()
+            self._set_thumbnail_rail_busy(False)
             return
 
+        self._cancel_thumbnail_worker()
+        self._set_thumbnail_rail_busy(True)
+        worker = ThumbnailRailWorker(specs, ThumbnailRailWidget.RENDER_WIDTH)
+        worker.finished_ok.connect(self._on_thumbnail_worker_finished)
+        self._thumbnail_worker = worker
+        worker.start()
+
+    def _cancel_thumbnail_worker(self) -> None:
+        """Desconecta el resultado del hilo de miniaturas anterior (si
+        seguia corriendo) para que, cuando termine, no pise con datos
+        viejos lo que se muestra ahora. El hilo en si se deja terminar
+        solo (forzar su interrupcion no es seguro en PySide6)."""
+        if self._thumbnail_worker is not None:
+            try:
+                self._thumbnail_worker.finished_ok.disconnect(self._on_thumbnail_worker_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._thumbnail_worker = None
+
+    def _build_rail_specs(self) -> list[tuple]:
+        """Arma, en el hilo principal, la lista de especificaciones (rutas,
+        ids, textos) que el hilo de fondo va a renderizar. No abre ningun
+        PDF de documento (solo lee datos ya en memoria del proyecto), asi
+        que es practicamente instantaneo incluso con muchos documentos."""
+        if not self.project or not self.project.template_path:
+            return []
         try:
             builder = DossierBuilder(self.project)
             blocks = builder.build_blocks()
         except pdf_engine.PDFOpenError:
-            self.thumbnail_rail.clear()
-            self._update_thumbnail_position_label()
-            return
+            return []
 
         section_labels = {
             section.id: f"{section.numbering} {section.title}".strip()
             for section in self.project.iter_all_sections()
         }
 
-        template_doc: Optional[fitz.Document] = None
-        if Path(self.project.template_path).exists():
-            try:
-                template_doc = fitz.open(self.project.template_path)
-            except Exception:  # noqa: BLE001 - una plantilla danada no debe romper el panel
-                template_doc = None
-
-        entries: list[RailEntry] = []
-        try:
-            for block in blocks:
-                kind = block[0]
-                if kind == "template":
-                    _, page_index = block
-                    pixmap = None
-                    if template_doc is not None:
-                        pixmap = render_pdf_page_pixmap(template_doc, page_index, ThumbnailRailWidget.RENDER_WIDTH)
-                    entries.append(
-                        RailEntry(
-                            document_id=None,
-                            section_id=None,
-                            page_index=page_index,
-                            caption=f"Plantilla\nPagina {page_index + 1}",
-                            pixmap=pixmap,
-                        )
+        specs: list[tuple] = []
+        for block in blocks:
+            kind = block[0]
+            if kind == "template":
+                _, page_index = block
+                specs.append(("template", self.project.template_path, page_index))
+            elif kind == "doc":
+                _, section_id, doc = block
+                specs.append(
+                    (
+                        "doc",
+                        doc.id,
+                        section_id,
+                        section_labels.get(section_id, ""),
+                        doc.name,
+                        doc.source_path,
+                        frozenset(doc.excluded_pages),
                     )
-                elif kind == "doc":
-                    _, section_id, doc = block
-                    section_label = section_labels.get(section_id, "")
-                    entries.extend(self._build_rail_entries_for_document(section_id, section_label, doc))
-                # los bloques "bookmark" (secciones dinamicas) no ocupan hoja fisica.
-        finally:
-            if template_doc is not None:
-                template_doc.close()
+                )
+            # los bloques "bookmark" (secciones dinamicas) no ocupan hoja fisica.
+        return specs
 
+    def _on_thumbnail_worker_finished(self, rendered: list[tuple]) -> None:
+        entries = [
+            RailEntry(
+                document_id=document_id,
+                section_id=section_id,
+                page_index=page_index,
+                caption=caption,
+                pixmap=(QPixmap.fromImage(image) if image is not None else None),
+                excluded=excluded,
+            )
+            for document_id, section_id, page_index, caption, image, excluded in rendered
+        ]
         self.thumbnail_rail.load_entries(entries)
         self._update_thumbnail_position_label()
+        self._thumbnail_worker = None
+        self._set_thumbnail_rail_busy(False)
+
+    def _set_thumbnail_rail_busy(self, busy: bool) -> None:
+        self.thumbnail_busy_bar.setVisible(busy)
 
     def _on_thumbnail_current_changed(self, _current, _previous) -> None:
         self._update_thumbnail_position_label()
@@ -890,46 +1173,6 @@ class MainWindow(QMainWindow):
             self.thumbnail_position_label.setText(f"{total} hoja(s) en total")
         else:
             self.thumbnail_position_label.setText(f"Hoja {current_row + 1} de {total}")
-
-    def _build_rail_entries_for_document(
-        self, section_id: str, section_label: str, doc: DocumentItem
-    ) -> list[RailEntry]:
-        path = doc.source_path
-        if not path or not Path(path).exists():
-            caption = f"{section_label}\n{doc.name}\n(archivo no disponible)"
-            return [RailEntry(document_id=doc.id, section_id=section_id, page_index=0, caption=caption, pixmap=None)]
-
-        try:
-            source_doc = fitz.open(path)
-        except Exception:  # noqa: BLE001 - un archivo danado no debe romper el panel
-            caption = f"{section_label}\n{doc.name}\n(no se pudo abrir)"
-            return [RailEntry(document_id=doc.id, section_id=section_id, page_index=0, caption=caption, pixmap=None)]
-
-        excluded = set(doc.excluded_pages)
-        entries: list[RailEntry] = []
-        try:
-            total_pages = source_doc.page_count
-            for page_index in range(total_pages):
-                is_excluded = page_index in excluded
-                pixmap = render_pdf_page_pixmap(source_doc, page_index, ThumbnailRailWidget.RENDER_WIDTH)
-                caption = f"{section_label}\n{doc.name}"
-                if total_pages > 1:
-                    caption += f"\nHoja {page_index + 1} de {total_pages}"
-                if is_excluded:
-                    caption += "\n(excluida del dossier)"
-                entries.append(
-                    RailEntry(
-                        document_id=doc.id,
-                        section_id=section_id,
-                        page_index=page_index,
-                        caption=caption,
-                        pixmap=pixmap,
-                        excluded=is_excluded,
-                    )
-                )
-        finally:
-            source_doc.close()
-        return entries
 
     def _on_thumbnail_activated(self, section_id: str, document_id: str, page_index: int) -> None:
         """Una miniatura fue seleccionada: llevar el arbol de secciones y la
@@ -1512,6 +1755,7 @@ class MainWindow(QMainWindow):
             self.btn_add_docs,
             self.btn_add_folder,
             self.btn_add_subsection,
+            self.btn_no_aplica,
             self.btn_remove_section,
             self.btn_move_up,
             self.btn_move_down,

@@ -42,6 +42,11 @@ class AppSettings:
     # (ancho en pixeles), para que se recuerde entre sesiones.
     thumbnail_rail_zoom: int = 130
 
+    # PDF de una sola pagina que se inserta al marcar una seccion/subseccion
+    # como "NO APLICA" (ver boton en la ventana principal). Se recuerda para
+    # no tener que elegirlo cada vez.
+    default_no_aplica_template_path: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

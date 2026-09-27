@@ -24,6 +24,8 @@ STATUS_LABELS = {
 
 def document_display_text(doc: DocumentItem, index: int) -> str:
     tags = []
+    if doc.is_no_aplica_placeholder:
+        tags.append("NO APLICA")
     if doc.has_signature:
         tags.append("FIRMA")
     if doc.will_be_flattened:
@@ -170,6 +172,8 @@ class SectionTreeWidget(QTreeWidget):
 
     def _add_node(self, node: SectionNode, parent_item: Optional[QTreeWidgetItem]) -> QTreeWidgetItem:
         label = f"{node.numbering} {node.title}".strip()
+        if any(d.is_no_aplica_placeholder for d in node.documents):
+            label += "  [NO APLICA]"
         count = str(node.total_documents())
         if parent_item is None:
             item = QTreeWidgetItem(self, [label, count])

@@ -29,6 +29,15 @@ def test_document_item_excluded_pages_round_trip():
     assert restored.excluded_pages == [1, 3]
 
 
+def test_document_item_no_aplica_placeholder_round_trip():
+    doc = DocumentItem(source_path="/tmp/no_aplica.pdf", display_name="NO APLICA.pdf")
+    assert doc.is_no_aplica_placeholder is False
+
+    doc.is_no_aplica_placeholder = True
+    restored = DocumentItem.from_dict(doc.to_dict())
+    assert restored.is_no_aplica_placeholder is True
+
+
 def test_section_node_round_trip_with_children_and_documents():
     child = SectionNode(title="Subseccion", numbering="1.1", level=2, template_page_index=3)
     child.documents.append(DocumentItem(source_path="/tmp/x.pdf"))

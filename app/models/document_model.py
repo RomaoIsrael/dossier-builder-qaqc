@@ -55,6 +55,12 @@ class DocumentItem:
     # el documento completo en su lugar.
     excluded_pages: list[int] = field(default_factory=list)
 
+    # True si este documento es la hoja generica "NO APLICA" insertada
+    # automaticamente al marcar una seccion/subseccion sin contenido (ver
+    # boton "NO APLICA" en la ventana principal). Permite identificarla y
+    # revertir la marca facilmente sin confundirla con un documento real.
+    is_no_aplica_placeholder: bool = False
+
     # Se completan solo cuando el documento requiere aplanado (firma visible).
     flattened_path: Optional[str] = None
     sha256_flattened: Optional[str] = None

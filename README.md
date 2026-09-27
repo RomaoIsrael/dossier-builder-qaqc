@@ -568,6 +568,28 @@ página exacta tras las inserciones.
   semitransparente (antes solo se ponia en gris), para poder identificar
   de un vistazo cuales hojas no se van a contar en el dossier y decidir
   mas adelante si se vuelven a incluir.
+- **El panel de miniaturas ya no congela la interfaz**: renderizar todas
+  las hojas del dossier (abrir cada PDF y rasterizar cada pagina) ahora se
+  hace en un hilo de fondo (`ThumbnailRailWorker`, `QThread`) en vez de
+  bloquear la ventana principal. Se le pasan solo datos inmutables (rutas,
+  ids, textos) armados de antemano en el hilo principal, nunca una
+  referencia viva al proyecto, para que sea seguro que el usuario lo siga
+  editando mientras tanto. Mientras el hilo trabaja se muestra una barra
+  de progreso indeterminada arriba de las miniaturas. Tambien se agrego
+  cursor de espera + mensaje de progreso en la barra de estado
+  ("Agregando documentos... (N/M)") al agregar varios documentos a la vez.
+- **Proyectos recientes**: nuevo boton en la barra de herramientas, junto a
+  "Abrir proyecto", con un menu desplegable de los ultimos proyectos
+  abiertos/guardados (hasta 10) para reabrirlos con un clic; marca cual es
+  el proyecto actualmente abierto y permite limpiar el historial.
+- **Boton "NO APLICA"**: nuevo boton de casilla en el panel central que,
+  al marcarlo sobre una seccion/subseccion sin contenido, agrega
+  automaticamente una hoja generica "NO APLICA" (un PDF de una sola
+  pagina, configurable en Preferencias o al usarlo por primera vez) como
+  contenido de esa seccion. Es reversible: desmarcar el boton quita esa
+  hoja sin dejar rastro. Nuevo campo `DocumentItem.is_no_aplica_placeholder`
+  y `AppSettings.default_no_aplica_template_path` para identificarla y
+  recordar el archivo elegido.
 
 ## Roadmap / Fase 4
 
