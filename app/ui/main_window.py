@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import fitz  # PyMuPDF
-from PySide6.QtCore import QSize, QThread, QUrl, Qt, Signal
+from PySide6.QtCore import QSize, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -118,6 +118,11 @@ class ThumbnailRailWorker(QThread):
     """
 
     finished_ok = Signal(list)
+    # Emitida si algo salio mal de forma inesperada (no un PDF puntual danado,
+    # eso ya se maneja arriba sin interrumpir el resto): permite que la
+    # ventana principal se entere y avise, en vez de que el hilo muera en
+    # silencio y el panel de miniaturas quede congelado sin explicacion.
+    failed = Signal(str)
 
     def __init__(self, specs: list[tuple], render_width: int):
         super().__init__()
@@ -125,53 +130,65 @@ class ThumbnailRailWorker(QThread):
         self._render_width = render_width
 
     def run(self) -> None:  # noqa: D102 - metodo estandar de QThread
-        rendered: list[tuple] = []
-        template_doc: Optional[fitz.Document] = None
-        template_open_failed = False
+        # Todo el cuerpo esta protegido con un try/except amplio a proposito:
+        # una excepcion sin capturar dentro de un QThread no llega al
+        # "sys.excepthook" de la ventana principal (eso solo cubre el hilo
+        # principal), asi que sin esta red el hilo simplemente terminaria sin
+        # avisar a nadie -- exactamente el tipo de "se cierra sin
+        # notificacion" que no se debe permitir.
+        try:
+            rendered: list[tuple] = []
+            template_doc: Optional[fitz.Document] = None
+            template_open_failed = False
 
-        for spec in self._specs:
-            kind = spec[0]
-            if kind == "template":
-                _, template_path, page_index = spec
-                if template_doc is None and not template_open_failed and template_path:
+            for spec in self._specs:
+                kind = spec[0]
+                if kind == "template":
+                    _, template_path, page_index = spec
+                    if template_doc is None and not template_open_failed and template_path:
+                        try:
+                            template_doc = fitz.open(template_path)
+                        except Exception:  # noqa: BLE001 - una plantilla danada no debe romper el panel
+                            template_open_failed = True
+                    image = None
+                    if template_doc is not None:
+                        image = render_pdf_page_image(template_doc, page_index, self._render_width)
+                    rendered.append((None, None, page_index, f"Plantilla\nPagina {page_index + 1}", image, False))
+                elif kind == "doc":
+                    _, document_id, section_id, section_label, name, source_path, excluded = spec
+                    if not source_path or not Path(source_path).exists():
+                        caption = f"{section_label}\n{name}\n(archivo no disponible)"
+                        rendered.append((document_id, section_id, 0, caption, None, False))
+                        continue
                     try:
-                        template_doc = fitz.open(template_path)
-                    except Exception:  # noqa: BLE001 - una plantilla danada no debe romper el panel
-                        template_open_failed = True
-                image = None
-                if template_doc is not None:
-                    image = render_pdf_page_image(template_doc, page_index, self._render_width)
-                rendered.append((None, None, page_index, f"Plantilla\nPagina {page_index + 1}", image, False))
-            elif kind == "doc":
-                _, document_id, section_id, section_label, name, source_path, excluded = spec
-                if not source_path or not Path(source_path).exists():
-                    caption = f"{section_label}\n{name}\n(archivo no disponible)"
-                    rendered.append((document_id, section_id, 0, caption, None, False))
-                    continue
-                try:
-                    source_doc = fitz.open(source_path)
-                except Exception:  # noqa: BLE001 - un archivo danado no debe romper el panel
-                    caption = f"{section_label}\n{name}\n(no se pudo abrir)"
-                    rendered.append((document_id, section_id, 0, caption, None, False))
-                    continue
-                try:
-                    total_pages = source_doc.page_count
-                    for page_index in range(total_pages):
-                        is_excluded = page_index in excluded
-                        image = render_pdf_page_image(source_doc, page_index, self._render_width)
-                        caption = f"{section_label}\n{name}"
-                        if total_pages > 1:
-                            caption += f"\nHoja {page_index + 1} de {total_pages}"
-                        if is_excluded:
-                            caption += "\n(excluida del dossier)"
-                        rendered.append((document_id, section_id, page_index, caption, image, is_excluded))
-                finally:
-                    source_doc.close()
+                        source_doc = fitz.open(source_path)
+                    except Exception:  # noqa: BLE001 - un archivo danado no debe romper el panel
+                        caption = f"{section_label}\n{name}\n(no se pudo abrir)"
+                        rendered.append((document_id, section_id, 0, caption, None, False))
+                        continue
+                    try:
+                        total_pages = source_doc.page_count
+                        for page_index in range(total_pages):
+                            is_excluded = page_index in excluded
+                            image = render_pdf_page_image(source_doc, page_index, self._render_width)
+                            caption = f"{section_label}\n{name}"
+                            if total_pages > 1:
+                                caption += f"\nHoja {page_index + 1} de {total_pages}"
+                            if is_excluded:
+                                caption += "\n(excluida del dossier)"
+                            rendered.append((document_id, section_id, page_index, caption, image, is_excluded))
+                    except Exception:  # noqa: BLE001 - una pagina puntual danada no debe romper el panel
+                        logger.exception("Fallo al renderizar paginas de '%s'", name)
+                    finally:
+                        source_doc.close()
 
-        if template_doc is not None:
-            template_doc.close()
+            if template_doc is not None:
+                template_doc.close()
 
-        self.finished_ok.emit(rendered)
+            self.finished_ok.emit(rendered)
+        except Exception as exc:  # noqa: BLE001 - nunca debe matar el hilo en silencio
+            logger.exception("Error inesperado generando miniaturas")
+            self.failed.emit(f"No se pudieron generar las miniaturas: {exc}")
 
 
 class MainWindow(QMainWindow):
@@ -198,11 +215,30 @@ class MainWindow(QMainWindow):
         self._syncing_selection = False
         self._thumbnail_worker: Optional[ThumbnailRailWorker] = None
 
+        # Autoguardado: ademas de "Guardar" (explicito), el proyecto se
+        # respalda solo mientras se trabaja, para no perder avances si la
+        # aplicacion llegara a cerrarse de forma inesperada. Un temporizador
+        # "debounce" (se reinicia con cada cambio) autoguarda poco despues de
+        # la ultima edicion, para que se sienta "en tiempo real" sin escribir
+        # a disco en cada tecla; uno periodico de respaldo asegura que, aunque
+        # se este editando sin pausa, nunca pasen mas de
+        # _AUTOSAVE_PERIODIC_MS sin un autoguardado.
+        self._AUTOSAVE_DEBOUNCE_MS = 3000
+        self._AUTOSAVE_PERIODIC_MS = 30000
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._perform_autosave)
+        self._autosave_periodic_timer = QTimer(self)
+        self._autosave_periodic_timer.setInterval(self._AUTOSAVE_PERIODIC_MS)
+        self._autosave_periodic_timer.timeout.connect(self._perform_autosave)
+        self._autosave_periodic_timer.start()
+
         self._build_toolbar()
         self._build_central_widget()
         self.setStatusBar(QStatusBar())
 
         self._refresh_ui()
+        self._check_for_crash_recovery()
 
     def _log_action(self, action: str, details: str = "") -> None:
         """Registra en el historial del proyecto quien (usuario de Windows)
@@ -224,6 +260,70 @@ class MainWindow(QMainWindow):
         self._dirty = True
         if action:
             self._log_action(action, details)
+        self._schedule_autosave()
+
+    def _schedule_autosave(self) -> None:
+        if self.project is None:
+            return
+        self._autosave_timer.start(self._AUTOSAVE_DEBOUNCE_MS)
+
+    def _perform_autosave(self) -> None:
+        """Escribe una copia de respaldo del proyecto actual (ver
+        ProjectService.autosave). Nunca debe poder cerrar la aplicacion: si
+        algo falla (disco lleno, permisos, etc.) solo se registra en el log,
+        igual que cualquier otro autoguardado fallido no deberia impedir
+        seguir trabajando."""
+        if self.project is None or not self._dirty:
+            return
+        try:
+            self.project_service.autosave(self.project)
+        except Exception:  # noqa: BLE001 - un fallo de autoguardado no debe tumbar nada
+            logger.exception("Fallo el autoguardado automatico del proyecto")
+
+    def _check_for_crash_recovery(self) -> None:
+        """Al abrir la aplicacion, revisa si quedo algun autoguardado mas
+        reciente que su archivo .dossierproj real (indicio de que la
+        aplicacion se cerro antes de que el usuario llegara a guardar) y
+        ofrece recuperarlo. Los autoguardados ya al dia se descartan en
+        silencio dentro de ProjectService.list_recoverable_autosaves()."""
+        try:
+            recoverable = self.project_service.list_recoverable_autosaves()
+        except Exception:  # noqa: BLE001 - esto nunca debe impedir que la ventana abra
+            logger.exception("Fallo al revisar autoguardados pendientes")
+            return
+
+        for entry in recoverable:
+            autosave_path = entry["autosave_path"]
+            answer = QMessageBox.question(
+                self,
+                "Recuperacion automatica disponible",
+                f"Se encontro un autoguardado de '{entry['project_name']}' "
+                f"({entry['autosaved_at']}) que no llego a guardarse manualmente, "
+                "probablemente porque la aplicacion se cerro de forma inesperada.\n\n"
+                "Desea recuperarlo ahora?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer != QMessageBox.Yes:
+                self.project_service.discard_autosave_at(autosave_path)
+                continue
+            try:
+                project = self.project_service.load_autosave(autosave_path)
+            except Exception as exc:  # noqa: BLE001 - un autoguardado corrupto no debe tumbar nada
+                logger.exception("No se pudo recuperar el autoguardado '%s'", autosave_path)
+                QMessageBox.warning(self, "Recuperacion automatica", f"No se pudo recuperar: {exc}")
+                continue
+            self.project = project
+            self.current_section_id = None
+            self._dirty = True  # recuperado: aun no coincide con el ultimo .dossierproj guardado
+            self._refresh_ui()
+            self.statusBar().showMessage(
+                "Proyecto recuperado desde autoguardado. Revise y guarde cuando este listo.", 8000
+            )
+            # Solo se puede tener un proyecto abierto a la vez en esta ventana:
+            # el resto de los autoguardados pendientes se preguntan la
+            # proxima vez que se abra la aplicacion.
+            break
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - nombre Qt
         if self.project is not None and self._dirty:
@@ -245,6 +345,10 @@ class MainWindow(QMainWindow):
                     # no se cierra la aplicacion para no perder los cambios.
                     event.ignore()
                     return
+            elif answer == QMessageBox.Discard:
+                # El usuario eligio explicitamente no guardar: el autoguardado
+                # tambien se descarta, para no ofrecer "recuperarlo" despues.
+                self.project_service.discard_autosave(self.project)
         event.accept()
 
     # ------------------------------------------------------------------
@@ -584,9 +688,13 @@ class MainWindow(QMainWindow):
         if self.project and self.project.project_file_path:
             current_path = str(Path(self.project.project_file_path).resolve())
 
-        for path in recents:
+        for entry in recents:
+            path = entry.get("path", "")
             exists = Path(path).exists()
             label = Path(path).stem
+            timestamp_label = self._format_recent_timestamp(entry.get("opened_at"))
+            if timestamp_label:
+                label += f"  ({timestamp_label})"
             if current_path and exists and str(Path(path).resolve()) == current_path:
                 label += "  <- proyecto actual"
             if not exists:
@@ -599,6 +707,21 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         clear_action = menu.addAction("Limpiar historial")
         clear_action.triggered.connect(self._clear_recent_projects)
+
+    def _format_recent_timestamp(self, iso_value: Optional[str]) -> str:
+        """Convierte la fecha/hora guardada (ISO, UTC) a hora local legible
+        (dd/mm/aaaa HH:MM) para mostrarla en "Proyectos recientes". Devuelve
+        texto vacio si no hay fecha (proyectos ya en el historial antes de
+        que existiera este dato) en vez de fallar."""
+        if not iso_value:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(iso_value)
+        except ValueError:
+            return ""
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.strftime("%d/%m/%Y %H:%M")
 
     def _open_recent_project(self, path: str) -> None:
         if not Path(path).exists():
@@ -639,6 +762,7 @@ class MainWindow(QMainWindow):
         self.settings_service.add_recent_project(str(saved_path))
         self.statusBar().showMessage(f"Proyecto guardado en {saved_path}", 5000)
         self._dirty = False
+        self.project_service.discard_autosave(self.project)
         self._log_action("Guardar proyecto", str(saved_path))
         self._refresh_ui()
 
@@ -1135,6 +1259,7 @@ class MainWindow(QMainWindow):
         self._set_thumbnail_rail_busy(True)
         worker = ThumbnailRailWorker(specs, ThumbnailRailWidget.RENDER_WIDTH)
         worker.finished_ok.connect(self._on_thumbnail_worker_finished)
+        worker.failed.connect(self._on_thumbnail_worker_failed)
         self._thumbnail_worker = worker
         worker.start()
 
@@ -1148,7 +1273,19 @@ class MainWindow(QMainWindow):
                 self._thumbnail_worker.finished_ok.disconnect(self._on_thumbnail_worker_finished)
             except (TypeError, RuntimeError):
                 pass
+            try:
+                self._thumbnail_worker.failed.disconnect(self._on_thumbnail_worker_failed)
+            except (TypeError, RuntimeError):
+                pass
             self._thumbnail_worker = None
+
+    def _on_thumbnail_worker_failed(self, message: str) -> None:
+        """El hilo de miniaturas no pudo terminar por un error inesperado
+        (no un PDF puntual danado, eso ya se maneja sin llegar aqui). Se
+        avisa en la barra de estado en vez de dejar el panel congelado sin
+        explicacion, y queda registrado en el log para poder diagnosticarlo."""
+        self._set_thumbnail_rail_busy(False)
+        self.statusBar().showMessage(f"Aviso: {message}", 8000)
 
     def _build_rail_specs(self) -> list[tuple]:
         """Arma, en el hilo principal, la lista de especificaciones (rutas,
@@ -1634,9 +1771,27 @@ class MainWindow(QMainWindow):
         menu.addAction("Agregar subseccion", self.add_subsection)
         menu.addAction("Renombrar seccion", self._rename_current_section)
         menu.addSeparator()
+        backup_action = menu.addAction(
+            "Respaldar TODOS los documentos de esta seccion en Originales (con n.º de pagina)"
+        )
+        backup_action.setCheckable(True)
+        backup_action.setChecked(section.always_backup_originals)
+        backup_action.setToolTip(
+            "Normalmente solo se respalda en 00_ORIGINALES_FIRMADOS/ un documento con firma. "
+            "Con esto activo, TODOS los documentos de esta seccion se respaldan ahi (con el "
+            "prefijo 'pag N_'), tengan firma o no."
+        )
+        backup_action.toggled.connect(lambda checked: self._toggle_section_backup_originals(section, checked))
+        menu.addSeparator()
         menu.addAction("Eliminar seccion", self.remove_section)
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _toggle_section_backup_originals(self, section: SectionNode, checked: bool) -> None:
+        section.always_backup_originals = checked
+        estado = "activado" if checked else "desactivado"
+        label = f"{section.numbering} {section.title}".strip()
+        self._touch_project("Respaldo de originales por seccion", f"'{label}' -> {estado}")
 
     def _rename_current_section(self) -> None:
         section = self._current_section()

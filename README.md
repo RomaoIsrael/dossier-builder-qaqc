@@ -661,6 +661,57 @@ página exacta tras las inserciones.
   tiempo de ejecucion; `app/main.py` lo carga con `app.setWindowIcon(...)`
   para que aparezca en la barra de tareas y la barra de titulo tanto
   corriendo desde el codigo fuente como ya compilado.
+- **Instalador (Setup.exe) con Inno Setup**: `installer.iss` genera un
+  instalador por usuario (`PrivilegesRequired=lowest`, no requiere ser
+  administrador), con accesos en el Menu Inicio y, opcionalmente, en el
+  Escritorio, y su propio desinstalador. `build_exe.bat` detecta `ISCC.exe`
+  automaticamente si Inno Setup esta instalado y compila el instalador
+  despues del `.exe`.
+- **Autoguardado en segundo plano y recuperacion ante un cierre inesperado**:
+  ademas de "Guardar" (explicito), el proyecto abierto se autoguarda solo
+  (`ProjectService.autosave`, en `AppData/DossierBuilderQAQC/autosave/`,
+  identificado por el id del proyecto, no por su ruta -- funciona incluso
+  con un proyecto que todavia nunca se guardo en disco). Se dispara unos
+  segundos despues de cada cambio (`MainWindow._schedule_autosave`, timer
+  "debounce" de 3s) y, como red de seguridad adicional, al menos cada 30s si
+  hay cambios sin guardar. Al abrir la aplicacion, `ProjectService.
+  list_recoverable_autosaves()` detecta autoguardados mas nuevos que su
+  archivo `.dossierproj` real (indicio de que la aplicacion se cerro antes
+  de guardar manualmente) y ofrece recuperarlos; los que ya estan al dia se
+  descartan en silencio. Al guardar manualmente o al descartar los cambios
+  desde el dialogo de cierre, el autoguardado correspondiente se borra, para
+  no volver a preguntar por el.
+- **Mas resistencia a cierres silenciosos en el hilo de miniaturas**: el
+  cuerpo completo de `ThumbnailRailWorker.run()` ahora esta protegido con un
+  `try/except` amplio que nunca deja morir el hilo en silencio -- una
+  excepcion en un `QThread` de PySide6 no llega al manejador global de
+  errores de la ventana principal (eso solo cubre el hilo principal), asi
+  que sin esta red el hilo terminaba sin avisar a nadie y el panel de
+  miniaturas quedaba congelado sin explicacion. Ahora, ante cualquier error
+  inesperado, se avisa en la barra de estado (nueva señal `failed`) y queda
+  registrado en el log. Esto no puede evitar, en casos extremos, que un PDF
+  severamente corrupto haga fallar a la libreria de PDF a un nivel que
+  ningun programa puede interceptar -- para ese escenario esta el
+  autoguardado descrito arriba, que limita la perdida a, como mucho, los
+  ultimos segundos de trabajo.
+- **Fecha y hora en "Proyectos recientes"**: cada entrada del historial
+  (`AppSettings.recent_projects`, ahora `list[dict]` con `path` y
+  `opened_at` en vez de solo texto, con migracion automatica de
+  `settings.json` guardados por versiones anteriores) muestra entre
+  parentesis cuando se abrio o guardo por ultima vez, en hora local
+  (`dd/mm/aaaa hh:mm`).
+- **Respaldo de originales por seccion (pensado para TUBERIA)**: nuevo campo
+  `SectionNode.always_backup_originals`. Normalmente solo se copia a
+  `00_ORIGINALES_FIRMADOS/` un documento con firma
+  (`keep_backup_of_signed_originals`); si se activa este campo para una
+  seccion (clic derecho sobre la seccion en el arbol -> "Respaldar TODOS
+  los documentos de esta seccion en Originales..."), **todos** sus
+  documentos se respaldan ahi con el prefijo `pag {N}_`, tengan firma o no.
+  Las secciones cuyo titulo contiene "TUBERIA" quedan activadas por defecto
+  automaticamente, tanto en proyectos nuevos (`build_section_tree_from_toc`)
+  como al abrir proyectos existentes guardados antes de que existiera este
+  campo (`SectionNode.from_dict`); se puede desactivar o activar para
+  cualquier otra seccion desde el mismo menu.
 
 ## Roadmap / Fase 4
 

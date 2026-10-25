@@ -150,11 +150,14 @@ previamente (propio o de otra persona/computadora).</li>
 <li><b>Proyectos recientes</b>: junto a "Abrir proyecto", este boton muestra
 un menu desplegable con los ultimos proyectos abiertos o guardados (hasta
 10), para reabrirlos con un clic sin tener que buscarlos en el explorador
-de archivos. El proyecto que esta abierto en este momento aparece marcado
-con "&lt;- proyecto actual", asi se puede confirmar rapidamente en cual se
-esta trabajando; un proyecto cuyo archivo ya no se encuentra en el disco
-aparece deshabilitado con "(no encontrado)". Al final del menu hay una
-opcion para limpiar todo el historial.</li>
+de archivos. Cada entrada muestra entre parentesis la <b>fecha y hora</b>
+(dd/mm/aaaa hh:mm, en hora local) de la ultima vez que se abrio o guardo ese
+proyecto, para identificar rapidamente en cual se trabajo mas recientemente.
+El proyecto que esta abierto en este momento aparece marcado con "&lt;-
+proyecto actual", asi se puede confirmar rapidamente en cual se esta
+trabajando; un proyecto cuyo archivo ya no se encuentra en el disco aparece
+deshabilitado con "(no encontrado)". Al final del menu hay una opcion para
+limpiar todo el historial.</li>
 <li><b>Guardar</b>: guarda los cambios en el mismo archivo del proyecto
 actual. Si el proyecto es nuevo y nunca se guardo, se comporta como
 &quot;Guardar como...&quot;.</li>
@@ -219,6 +222,16 @@ una seccion, el panel central muestra los documentos que contiene.</p>
 <li><b>Agregar subseccion</b>: crea una subseccion nueva dentro de la
 seleccionada, pidiendo su nombre.</li>
 <li><b>Renombrar seccion</b>: cambia el titulo de la seccion seleccionada.</li>
+<li><b>Respaldar TODOS los documentos de esta seccion en Originales (con
+n.&ordm; de pagina)</b>: casilla (queda marcada/desmarcada). Normalmente
+solo se copia a <code>00_ORIGINALES_FIRMADOS/</code> (con el prefijo
+"pag N_") un documento que tiene firma. Si se activa esta casilla para una
+seccion, TODOS sus documentos se copian ahi con su pagina de inicio, tengan
+firma o no, util por ejemplo para la seccion de <b>TUBERIA</b>. Las
+secciones cuyo titulo contiene "TUBERIA" quedan con esta casilla activada
+automaticamente (tanto en proyectos nuevos como en proyectos ya existentes
+al abrirlos), y se puede desactivar o activar para cualquier otra seccion
+desde aqui.</li>
 <li><b>Eliminar seccion</b>: borra la seccion (y todo lo que contenga:
 subsecciones y documentos). Pide confirmacion.</li>
 </ul>
@@ -473,6 +486,32 @@ esta generando en segundo plano; el resto de la aplicacion se puede seguir
 usando normalmente durante ese tiempo, no hace falta esperar a que
 termine.</li>
 </ul>
+
+<h2>12. Autoguardado y recuperacion ante un cierre inesperado</h2>
+<p>Ademas de "Guardar" (que hay que usar manualmente), el proyecto abierto
+se <b>autoguarda solo</b> en segundo plano mientras se trabaja: unos
+segundos despues de cada cambio (agregar un documento, excluir una hoja,
+etc.) y, como respaldo adicional, al menos una vez cada 30 segundos si hubo
+cambios sin guardar. Este autoguardado es independiente del archivo
+<code>.dossierproj</code> y no reemplaza al boton "Guardar": sirve
+unicamente como red de seguridad.</p>
+<p>Si la aplicacion llegara a cerrarse de forma inesperada (corte de luz,
+cierre forzado, un error no previsto, etc.) antes de que se guardara
+manualmente, al volver a abrirla se detecta el autoguardado pendiente y se
+pregunta si se desea <b>recuperarlo</b>. Si se acepta, el proyecto se abre
+tal como quedo en el ultimo autoguardado (marcado como "con cambios sin
+guardar", para que se revise y se guarde con el boton "Guardar" cuando se
+confirme que esta todo bien); si se rechaza, ese autoguardado se descarta y
+no se vuelve a preguntar por el.</p>
+<p>Tambien se reforzo el manejo de errores del panel de miniaturas (que
+renderiza los PDF en segundo plano): un archivo danado o un error
+inesperado ahora se avisa en la barra de estado en vez de poder dejar el
+panel congelado sin explicacion. Dicho esto, un PDF severamente corrupto
+puede, en casos extremos, hacer fallar a la libreria de PDF a un nivel que
+ningun programa puede interceptar; si la aplicacion llegara a cerrarse de
+todas formas, el autoguardado descrito arriba permite recuperar casi todo
+el trabajo (como mucho los ultimos segundos) en vez de perderlo por
+completo.</p>
 """
 
 

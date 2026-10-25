@@ -101,6 +101,33 @@ def test_audit_log_records_user_action_and_survives_round_trip():
     assert restored.audit_log == project.audit_log
 
 
+def test_section_node_always_backup_originals_round_trip():
+    section = SectionNode(title="Seccion", numbering="1", level=1)
+    assert section.always_backup_originals is False
+
+    section.always_backup_originals = True
+    restored = SectionNode.from_dict(section.to_dict())
+    assert restored.always_backup_originals is True
+
+
+def test_section_node_defaults_backup_originals_for_tuberia_when_field_missing():
+    # Simula un proyecto .dossierproj guardado antes de que existiera el
+    # campo "always_backup_originals": no viene en el diccionario.
+    data = SectionNode(title="2.2 TUBERIA", numbering="2.2", level=2).to_dict()
+    del data["always_backup_originals"]
+
+    restored = SectionNode.from_dict(data)
+    assert restored.always_backup_originals is True
+
+
+def test_section_node_does_not_force_backup_originals_for_other_sections():
+    data = SectionNode(title="2.4 EQUIPO BES", numbering="2.4", level=2).to_dict()
+    del data["always_backup_originals"]
+
+    restored = SectionNode.from_dict(data)
+    assert restored.always_backup_originals is False
+
+
 def test_audit_log_caps_at_max_entries():
     project = Project(name="Proyecto W")
     for i in range(project._MAX_AUDIT_LOG_ENTRIES + 10):

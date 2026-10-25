@@ -404,6 +404,42 @@ def test_flattened_document_backup_is_renamed_with_start_page(populated_project,
     assert manifest_entry["flattened_path"] == target_doc.flattened_path
 
 
+def test_section_always_backup_originals_backs_up_unsigned_documents(populated_project, tmp_path):
+    """Una seccion marcada con ``always_backup_originals`` (p. ej. TUBERIA)
+    debe respaldar TODOS sus documentos en 00_ORIGINALES_FIRMADOS/ con su
+    pagina de inicio, aunque no tengan firma ni se vayan a aplanar -- a
+    diferencia del comportamiento normal, que solo respalda documentos con
+    firma."""
+    project, dyn = populated_project
+    sec_1_2 = _find(project.sections, "1.2")
+    sec_1_2.always_backup_originals = True
+    target_doc = sec_1_2.documents[0]
+    assert target_doc.signature_treatment == SignatureTreatment.AUTO
+    assert not target_doc.will_be_flattened
+
+    builder = DossierBuilder(project)
+    result = builder.generate(str(tmp_path))
+
+    assert result.flattened_count == 0
+    assert target_doc.backup_path is not None
+    assert Path(target_doc.backup_path).exists()
+    assert target_doc.name in Path(target_doc.backup_path).name
+    assert Path(target_doc.backup_path).name.startswith("pag ")
+    # No se aplano: no debe existir version procesada.
+    assert target_doc.flattened_path is None
+
+
+def test_sections_without_always_backup_do_not_backup_unsigned_documents(populated_project, tmp_path):
+    project, dyn = populated_project
+    sec_1_2 = _find(project.sections, "1.2")
+    target_doc = sec_1_2.documents[0]
+
+    builder = DossierBuilder(project)
+    builder.generate(str(tmp_path))
+
+    assert target_doc.backup_path is None
+
+
 def test_flattened_document_backup_renamed_again_after_second_run(populated_project, tmp_path):
     """Regresion: en Windows, path.rename() falla si el destino ya existe.
     Antes de este fix, generar dos veces seguidas sobre la misma carpeta de

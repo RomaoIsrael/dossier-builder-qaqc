@@ -10,16 +10,19 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from app.models.project_model import Project
 from app.services.database import DatabaseService
 from app.services.logger import get_logger
+from app.utils.paths import app_data_dir
 
 logger = get_logger("project")
 
 PROJECT_EXTENSION = ".dossierproj"
+_AUTOSAVE_SUFFIX = ".autosave.json"
 
 
 class ProjectError(Exception):
@@ -94,3 +97,93 @@ class ProjectService:
     def close(self, project: Project) -> None:
         """No-op explicito: liberar referencias/estado de UI queda a cargo del caller."""
         logger.info("Proyecto cerrado: %s", project.name)
+
+    # -- Autoguardado / recuperacion ante cierre inesperado ------------------
+    #
+    # Ademas del archivo .dossierproj que el usuario guarda explicitamente
+    # (boton "Guardar"), se mantiene una copia de autoguardado por proyecto,
+    # actualizada automaticamente mientras se trabaja (ver MainWindow), para
+    # no perder avances si la aplicacion se cierra de forma inesperada antes
+    # de guardar. Vive aparte, en AppData, identificada por el id del
+    # proyecto (no por su ruta), para que funcione incluso con un proyecto
+    # que todavia nunca se guardo en disco.
+
+    def autosave_dir(self) -> Path:
+        path = app_data_dir() / "autosave"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def autosave_path(self, project: Project) -> Path:
+        return self.autosave_dir() / f"{project.id}{_AUTOSAVE_SUFFIX}"
+
+    def autosave(self, project: Project) -> Path:
+        """Guarda una copia de respaldo del estado actual del proyecto, sin
+        tocar ``project_file_path`` ni el archivo .dossierproj real."""
+        path = self.autosave_path(project)
+        wrapper = {
+            "autosaved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "original_path": project.project_file_path,
+            "project": project.to_dict(),
+        }
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(wrapper, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(path)
+        return path
+
+    def discard_autosave(self, project: Project) -> None:
+        """Borra el autoguardado de ``project`` (ya no hace falta: el archivo
+        .dossierproj real quedo al dia, o el usuario descarto los cambios)."""
+        try:
+            self.autosave_path(project).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("No se pudo borrar el autoguardado de '%s'", project.name)
+
+    def list_recoverable_autosaves(self) -> list[dict]:
+        """Autoguardados cuyo archivo .dossierproj original esta ausente o
+        desactualizado respecto al autoguardado (indicio de un cierre
+        inesperado con cambios sin guardar). Los autoguardados que ya estan
+        al dia con su archivo real se borran en silencio aqui mismo, para no
+        volver a preguntar por ellos. No carga el :class:`Project` completo
+        todavia, solo los metadatos livianos necesarios para decidir."""
+        recoverable: list[dict] = []
+        for path in self.autosave_dir().glob(f"*{_AUTOSAVE_SUFFIX}"):
+            try:
+                wrapper = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Autoguardado ilegible '%s': %s", path, exc)
+                continue
+
+            original_path = wrapper.get("original_path")
+            if original_path and Path(original_path).exists():
+                try:
+                    is_up_to_date = Path(original_path).stat().st_mtime >= path.stat().st_mtime
+                except OSError:
+                    is_up_to_date = False
+                if is_up_to_date:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    continue
+
+            recoverable.append(
+                {
+                    "autosave_path": str(path),
+                    "autosaved_at": wrapper.get("autosaved_at", ""),
+                    "original_path": original_path,
+                    "project_name": wrapper.get("project", {}).get("name", "Proyecto sin nombre"),
+                }
+            )
+        return recoverable
+
+    def load_autosave(self, autosave_path: str) -> Project:
+        wrapper = json.loads(Path(autosave_path).read_text(encoding="utf-8"))
+        project = Project.from_dict(wrapper["project"])
+        project.project_file_path = wrapper.get("original_path")
+        return project
+
+    def discard_autosave_at(self, autosave_path: str) -> None:
+        try:
+            Path(autosave_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("No se pudo borrar el autoguardado '%s'", autosave_path)
