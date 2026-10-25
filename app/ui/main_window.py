@@ -238,7 +238,18 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
 
         self._refresh_ui()
-        self._check_for_crash_recovery()
+        # Se pospone al proximo ciclo del loop de eventos (en vez de llamarse
+        # aqui directamente) a proposito: este constructor corre ANTES de
+        # que main.py muestre la ventana y cierre la pantalla de bienvenida
+        # (que ademas queda siempre "encima" de todo). Si esta revision
+        # encuentra un autoguardado pendiente y muestra su dialogo de
+        # confirmacion aqui mismo, ese dialogo puede quedar tapado detras de
+        # la pantalla de bienvenida -- la aplicacion parece "colgada" en el
+        # splash, cuando en realidad esta esperando un clic en un dialogo que
+        # no se ve. Con QTimer.singleShot(0, ...) la revision se hace recien
+        # cuando el loop de eventos ya esta corriendo, con la ventana
+        # principal visible y la pantalla de bienvenida ya cerrada.
+        QTimer.singleShot(0, self._check_for_crash_recovery)
 
     def _log_action(self, action: str, details: str = "") -> None:
         """Registra en el historial del proyecto quien (usuario de Windows)
