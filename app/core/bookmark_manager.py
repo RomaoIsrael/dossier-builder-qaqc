@@ -8,7 +8,7 @@ estructuras de datos simples, para poder probarse sin PyMuPDF instalado.
 from __future__ import annotations
 
 from app.core.pdf_engine import TocEntry
-from app.models.section_model import SectionNode, looks_like_tuberia_section
+from app.models.section_model import SectionNode
 
 
 def build_section_tree_from_toc(entries: list[TocEntry]) -> list[SectionNode]:
@@ -24,17 +24,11 @@ def build_section_tree_from_toc(entries: list[TocEntry]) -> list[SectionNode]:
 
     for entry in entries:
         level = max(1, entry.level)
-        title = entry.clean_title or entry.title
         node = SectionNode(
-            title=title,
+            title=entry.clean_title or entry.title,
             numbering=entry.numbering,
             level=level,
             template_page_index=entry.page_index,
-            # Igual que al abrir un proyecto viejo (SectionNode.from_dict):
-            # las secciones de TUBERIA empiezan con el respaldo de originales
-            # activado por defecto, tambien al crear un proyecto nuevo desde
-            # una plantilla. El usuario puede desactivarlo despues si quiere.
-            always_backup_originals=looks_like_tuberia_section(title),
         )
 
         while stack and stack[-1].level >= level:

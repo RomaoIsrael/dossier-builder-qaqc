@@ -244,7 +244,7 @@ class DossierBuilder:
         # -- 1. Preparar (backup + aplanado) de documentos firmados --------
         flattened_count = 0
         for section, doc in all_docs:
-            self._prepare_document(section, doc, dirs)
+            self._prepare_document(doc, dirs)
             if doc.status == DocumentStatus.FLATTENED:
                 flattened_count += 1
             tick(f"Procesando: {doc.name}")
@@ -618,7 +618,7 @@ class DossierBuilder:
             path.mkdir(parents=True, exist_ok=True)
         return dirs
 
-    def _prepare_document(self, section: SectionNode, doc: DocumentItem, dirs: dict[str, Path]) -> None:
+    def _prepare_document(self, doc: DocumentItem, dirs: dict[str, Path]) -> None:
         source = Path(doc.source_path)
         doc.file_size_bytes = source.stat().st_size
         doc.sha256_original = sha256_file(source)
@@ -629,22 +629,15 @@ class DossierBuilder:
             doc.error_message = str(exc)
             raise DossierGenerationError(str(exc)) from exc
 
-        # Respaldo en 00_ORIGINALES_FIRMADOS/: normalmente solo documentos
-        # con firma (si keep_backup_of_signed_originals esta activo), pero
-        # una seccion puede marcar "always_backup_originals" para que TODOS
-        # sus documentos se respalden igual, con o sin firma (ver TUBERIA).
-        wants_backup = (
-            doc.will_be_flattened and self.project.settings.keep_backup_of_signed_originals
-        ) or section.always_backup_originals
-        if wants_backup:
+        if not doc.will_be_flattened:
+            doc.status = DocumentStatus.OK
+            return
+
+        if self.project.settings.keep_backup_of_signed_originals:
             backup_path = dirs["backup"] / f"{safe_filename(doc.name)}"
             if not backup_path.exists():
                 shutil.copy2(source, backup_path)
             doc.backup_path = str(backup_path)
-
-        if not doc.will_be_flattened:
-            doc.status = DocumentStatus.OK
-            return
 
         # El documento procesado (aplanado) conserva el nombre original tal
         # cual, sin sufijos ni prefijos: solo cambia su contenido (paginas

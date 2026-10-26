@@ -1905,27 +1905,9 @@ class MainWindow(QMainWindow):
         menu.addAction("Agregar subseccion", self.add_subsection)
         menu.addAction("Renombrar seccion", self._rename_current_section)
         menu.addSeparator()
-        backup_action = menu.addAction(
-            "Respaldar TODOS los documentos de esta seccion en Originales (con n.º de pagina)"
-        )
-        backup_action.setCheckable(True)
-        backup_action.setChecked(section.always_backup_originals)
-        backup_action.setToolTip(
-            "Normalmente solo se respalda en 00_ORIGINALES_FIRMADOS/ un documento con firma. "
-            "Con esto activo, TODOS los documentos de esta seccion se respaldan ahi (con el "
-            "prefijo 'pag N_'), tengan firma o no."
-        )
-        backup_action.toggled.connect(lambda checked: self._toggle_section_backup_originals(section, checked))
-        menu.addSeparator()
         menu.addAction("Eliminar seccion", self.remove_section)
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
-
-    def _toggle_section_backup_originals(self, section: SectionNode, checked: bool) -> None:
-        section.always_backup_originals = checked
-        estado = "activado" if checked else "desactivado"
-        label = f"{section.numbering} {section.title}".strip()
-        self._touch_project("Respaldo de originales por seccion", f"'{label}' -> {estado}")
 
     def _rename_current_section(self) -> None:
         section = self._current_section()

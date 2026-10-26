@@ -222,16 +222,6 @@ una seccion, el panel central muestra los documentos que contiene.</p>
 <li><b>Agregar subseccion</b>: crea una subseccion nueva dentro de la
 seleccionada, pidiendo su nombre.</li>
 <li><b>Renombrar seccion</b>: cambia el titulo de la seccion seleccionada.</li>
-<li><b>Respaldar TODOS los documentos de esta seccion en Originales (con
-n.&ordm; de pagina)</b>: casilla (queda marcada/desmarcada). Normalmente
-solo se copia a <code>00_ORIGINALES_FIRMADOS/</code> (con el prefijo
-"pag N_") un documento que tiene firma. Si se activa esta casilla para una
-seccion, TODOS sus documentos se copian ahi con su pagina de inicio, tengan
-firma o no, util por ejemplo para la seccion de <b>TUBERIA</b>. Las
-secciones cuyo titulo contiene "TUBERIA" quedan con esta casilla activada
-automaticamente (tanto en proyectos nuevos como en proyectos ya existentes
-al abrirlos), y se puede desactivar o activar para cualquier otra seccion
-desde aqui.</li>
 <li><b>Eliminar seccion</b>: borra la seccion (y todo lo que contenga:
 subsecciones y documentos). Pide confirmacion.</li>
 </ul>

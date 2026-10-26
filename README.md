@@ -700,18 +700,20 @@ página exacta tras las inserciones.
   `settings.json` guardados por versiones anteriores) muestra entre
   parentesis cuando se abrio o guardo por ultima vez, en hora local
   (`dd/mm/aaaa hh:mm`).
-- **Respaldo de originales por seccion (pensado para TUBERIA)**: nuevo campo
-  `SectionNode.always_backup_originals`. Normalmente solo se copia a
-  `00_ORIGINALES_FIRMADOS/` un documento con firma
-  (`keep_backup_of_signed_originals`); si se activa este campo para una
-  seccion (clic derecho sobre la seccion en el arbol -> "Respaldar TODOS
-  los documentos de esta seccion en Originales..."), **todos** sus
-  documentos se respaldan ahi con el prefijo `pag {N}_`, tengan firma o no.
-  Las secciones cuyo titulo contiene "TUBERIA" quedan activadas por defecto
-  automaticamente, tanto en proyectos nuevos (`build_section_tree_from_toc`)
-  como al abrir proyectos existentes guardados antes de que existiera este
-  campo (`SectionNode.from_dict`); se puede desactivar o activar para
-  cualquier otra seccion desde el mismo menu.
+- **Revertido: respaldo de originales por seccion para TUBERIA**. Se habia
+  agregado un campo `SectionNode.always_backup_originals` para que, en
+  secciones como TUBERIA, se copiara a `00_ORIGINALES_FIRMADOS/` **todo**
+  documento de la seccion, firmado o no. Al probarlo en un proyecto real
+  quedo claro que no era lo correcto: esa carpeta debe contener
+  **unicamente** documentos con firma electronica real, y con ese campo
+  activado tambien entraban ahi guias de remision sin firma. Se revirtio
+  por completo (no queda ningun campo ni opcion de menu al respecto):
+  `00_ORIGINALES_FIRMADOS/` vuelve a depender exclusivamente de
+  `keep_backup_of_signed_originals` + que el documento tenga firma
+  (`DocumentItem.will_be_flattened`), sin excepciones por seccion. Un
+  documento firmado dentro de TUBERIA sigue respaldandose ahi con
+  normalidad, como cualquier otro documento firmado en cualquier seccion;
+  lo que ya no pasa es que se fuerce a los que no tienen firma.
 
 ## Roadmap / Fase 4
 
