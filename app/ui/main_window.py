@@ -191,6 +191,33 @@ class ThumbnailRailWorker(QThread):
             self.failed.emit(f"No se pudieron generar las miniaturas: {exc}")
 
 
+class AutosaveWorker(QThread):
+    """Escribe el autoguardado a disco en un hilo aparte.
+
+    ``wrapper`` ya viene armado (``ProjectService.build_autosave_wrapper``,
+    hecho en el hilo principal: solo recorre estructuras en memoria, es
+    practicamente instantaneo) -- este hilo solo hace la parte que puede
+    demorar, la escritura a disco en si (``write_autosave_wrapper``), para
+    que un disco lento, un antivirus escaneando o OneDrive sincronizando no
+    congelen la interfaz mientras tanto.
+    """
+
+    failed = Signal(str)
+
+    def __init__(self, project_service: ProjectService, wrapper: dict, path: Path):
+        super().__init__()
+        self._project_service = project_service
+        self._wrapper = wrapper
+        self._path = path
+
+    def run(self) -> None:  # noqa: D102 - metodo estandar de QThread
+        try:
+            self._project_service.write_autosave_wrapper(self._wrapper, self._path)
+        except Exception as exc:  # noqa: BLE001 - un fallo de autoguardado no debe tumbar nada
+            logger.exception("Fallo al escribir el autoguardado en segundo plano")
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -214,6 +241,14 @@ class MainWindow(QMainWindow):
         # secciones, la lista de documentos y el panel de miniaturas.
         self._syncing_selection = False
         self._thumbnail_worker: Optional[ThumbnailRailWorker] = None
+        self._autosave_worker: Optional[AutosaveWorker] = None
+        # Hilos de miniaturas "cancelados" (una nueva seccion/documento se
+        # selecciono antes de que terminaran de renderizar) que siguen
+        # corriendo de fondo: se mantienen vivos aqui hasta que realmente
+        # terminen solos. Ver _cancel_thumbnail_worker para el motivo exacto
+        # (critico: nunca se debe dejar que Python pierda la ultima
+        # referencia a un QThread mientras su run() todavia esta activo).
+        self._discarded_thumbnail_workers: list[ThumbnailRailWorker] = []
 
         # Autoguardado: ademas de "Guardar" (explicito), el proyecto se
         # respalda solo mientras se trabaja, para no perder avances si la
@@ -279,17 +314,43 @@ class MainWindow(QMainWindow):
         self._autosave_timer.start(self._AUTOSAVE_DEBOUNCE_MS)
 
     def _perform_autosave(self) -> None:
-        """Escribe una copia de respaldo del proyecto actual (ver
-        ProjectService.autosave). Nunca debe poder cerrar la aplicacion: si
-        algo falla (disco lleno, permisos, etc.) solo se registra en el log,
-        igual que cualquier otro autoguardado fallido no deberia impedir
-        seguir trabajando."""
+        """Dispara un autoguardado en segundo plano (``AutosaveWorker``).
+
+        La parte que recorre el proyecto (``build_autosave_wrapper``) se
+        hace aqui mismo, en el hilo principal, porque es practicamente
+        instantanea (solo arma diccionarios en memoria); la escritura a
+        disco en si -- la parte que puede demorar si el disco esta lento,
+        hay un antivirus escaneando, o la carpeta esta sincronizada con
+        OneDrive -- se hace en un hilo aparte para que nunca congele la
+        interfaz. Si ya hay un autoguardado en curso, este tick se saltea
+        (el siguiente, 3 o 30 segundos despues, lo va a volver a intentar)
+        en vez de acumular hilos.
+        """
         if self.project is None or not self._dirty:
             return
+        if self._autosave_worker is not None:
+            return
         try:
-            self.project_service.autosave(self.project)
+            wrapper = self.project_service.build_autosave_wrapper(self.project)
+            path = self.project_service.autosave_path(self.project)
         except Exception:  # noqa: BLE001 - un fallo de autoguardado no debe tumbar nada
-            logger.exception("Fallo el autoguardado automatico del proyecto")
+            logger.exception("Fallo al preparar el autoguardado automatico del proyecto")
+            return
+
+        worker = AutosaveWorker(self.project_service, wrapper, path)
+        worker.failed.connect(self._on_autosave_failed)
+        worker.finished.connect(self._on_autosave_worker_finished)
+        self._autosave_worker = worker
+        worker.start()
+
+    def _on_autosave_worker_finished(self) -> None:
+        self._autosave_worker = None
+
+    def _on_autosave_failed(self, message: str) -> None:
+        # Un fallo puntual de autoguardado no debe molestar al usuario cada
+        # vez (podria repetirse cada pocos segundos); queda en el log para
+        # poder diagnosticarlo, y el proximo tick simplemente lo reintenta.
+        logger.warning("Autoguardado en segundo plano fallo: %s", message)
 
     def _check_for_crash_recovery(self) -> None:
         """Al abrir la aplicacion, revisa si quedo algun autoguardado mas
@@ -360,7 +421,26 @@ class MainWindow(QMainWindow):
                 # El usuario eligio explicitamente no guardar: el autoguardado
                 # tambien se descarta, para no ofrecer "recuperarlo" despues.
                 self.project_service.discard_autosave(self.project)
+        self._wait_for_background_workers()
         event.accept()
+
+    def _wait_for_background_workers(self) -> None:
+        """Ultimo paso antes de cerrar la aplicacion: si algun hilo de fondo
+        (miniaturas, autoguardado o generacion) todavia estuviera corriendo
+        en este preciso momento, se espera a que termine en vez de dejar que
+        la ventana se destruya con el hilo todavia activo -- ver
+        _cancel_thumbnail_worker para el motivo exacto por el que eso puede
+        abortar toda la aplicacion de forma instantanea y silenciosa. Un
+        bloqueo breve aqui es preferible a ese riesgo; en la practica no
+        deberia notarse, porque la mayoria de estos hilos ya termino para
+        cuando el usuario llega a cerrar la ventana."""
+        candidates = list(self._discarded_thumbnail_workers)
+        candidates.extend(
+            w for w in (self._thumbnail_worker, self._autosave_worker, self._generation_worker) if w is not None
+        )
+        for worker in candidates:
+            if worker.isRunning():
+                worker.wait(5000)
 
     # ------------------------------------------------------------------
     # Construccion de la interfaz
@@ -1277,18 +1357,52 @@ class MainWindow(QMainWindow):
     def _cancel_thumbnail_worker(self) -> None:
         """Desconecta el resultado del hilo de miniaturas anterior (si
         seguia corriendo) para que, cuando termine, no pise con datos
-        viejos lo que se muestra ahora. El hilo en si se deja terminar
-        solo (forzar su interrupcion no es seguro en PySide6)."""
-        if self._thumbnail_worker is not None:
-            try:
-                self._thumbnail_worker.finished_ok.disconnect(self._on_thumbnail_worker_finished)
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self._thumbnail_worker.failed.disconnect(self._on_thumbnail_worker_failed)
-            except (TypeError, RuntimeError):
-                pass
-            self._thumbnail_worker = None
+        viejos lo que se muestra ahora.
+
+        CRITICO (causa real, confirmada, de cierres sin ningun aviso): antes,
+        esta funcion simplemente hacia ``self._thumbnail_worker = None``. Si
+        el hilo anterior TODAVIA estaba renderizando (muy posible: por eso
+        existe este hilo de fondo, renderizar puede demorar), esa era la
+        UNICA referencia de Python a ese ``QThread`` -- al perderla, el
+        recolector de basura lo destruye de inmediato. Destruir un QThread de
+        PySide6/Qt mientras su ``run()`` todavia esta corriendo aborta TODO
+        el proceso al instante, a nivel C++, sin ninguna excepcion de Python
+        que un ``try/except`` o el manejador global de errores puedan
+        interceptar ni registrar: exactamente "se cierra sin ninguna
+        notificacion". Pasa justo al cambiar rapido de seccion/documento
+        mientras las miniaturas anteriores todavia se estaban generando.
+
+        Ahora, si el hilo anterior sigue corriendo, se lo mantiene vivo en
+        ``self._discarded_thumbnail_workers`` hasta que termine solo (señal
+        ``finished``, la real de QThread, no la propia ``finished_ok``) y
+        recien ahi se libera. El resultado de un hilo descartado de todas
+        formas no importa: sus señales ya quedaron desconectadas abajo.
+        """
+        if self._thumbnail_worker is None:
+            return
+        worker = self._thumbnail_worker
+        self._thumbnail_worker = None
+        try:
+            worker.finished_ok.disconnect(self._on_thumbnail_worker_finished)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            worker.failed.disconnect(self._on_thumbnail_worker_failed)
+        except (TypeError, RuntimeError):
+            pass
+        self._keep_thumbnail_worker_alive_until_finished(worker)
+
+    def _keep_thumbnail_worker_alive_until_finished(self, worker: "ThumbnailRailWorker") -> None:
+        if not worker.isRunning():
+            return
+        self._discarded_thumbnail_workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._forget_discarded_thumbnail_worker(w))
+
+    def _forget_discarded_thumbnail_worker(self, worker: "ThumbnailRailWorker") -> None:
+        try:
+            self._discarded_thumbnail_workers.remove(worker)
+        except ValueError:
+            pass
 
     def _on_thumbnail_worker_failed(self, message: str) -> None:
         """El hilo de miniaturas no pudo terminar por un error inesperado
@@ -1352,7 +1466,16 @@ class MainWindow(QMainWindow):
         ]
         self.thumbnail_rail.load_entries(entries)
         self._update_thumbnail_position_label()
+        # Esta señal (finished_ok) se emite DESDE DENTRO de run(), antes de
+        # que el metodo termine de retornar del todo: por seguridad, se
+        # libera la referencia con el mismo camino seguro que usa
+        # _cancel_thumbnail_worker en vez de un simple "= None" (ver ahi el
+        # motivo exacto -- nunca se debe destruir un QThread mientras Qt
+        # todavia pueda considerarlo en ejecucion).
+        worker = self._thumbnail_worker
         self._thumbnail_worker = None
+        if worker is not None:
+            self._keep_thumbnail_worker_alive_until_finished(worker)
         self._set_thumbnail_rail_busy(False)
 
     def _set_thumbnail_rail_busy(self, busy: bool) -> None:

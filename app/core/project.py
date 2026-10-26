@@ -116,18 +116,37 @@ class ProjectService:
     def autosave_path(self, project: Project) -> Path:
         return self.autosave_dir() / f"{project.id}{_AUTOSAVE_SUFFIX}"
 
-    def autosave(self, project: Project) -> Path:
-        """Guarda una copia de respaldo del estado actual del proyecto, sin
-        tocar ``project_file_path`` ni el archivo .dossierproj real."""
-        path = self.autosave_path(project)
-        wrapper = {
+    def build_autosave_wrapper(self, project: Project) -> dict:
+        """Parte RAPIDA del autoguardado (solo recorre estructuras en
+        memoria, nunca toca disco): se llama desde el hilo principal. El
+        diccionario que devuelve es una copia nueva e independiente de
+        ``project`` (``project.to_dict()`` no reutiliza listas/diccionarios
+        vivos), asi que es seguro pasarlo a ``write_autosave_wrapper`` desde
+        un hilo de fondo mientras el usuario sigue editando el proyecto."""
+        return {
             "autosaved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "original_path": project.project_file_path,
             "project": project.to_dict(),
         }
+
+    def write_autosave_wrapper(self, wrapper: dict, path: Path) -> None:
+        """Parte LENTA del autoguardado (la escritura a disco en si): pensada
+        para llamarse desde un hilo de fondo, para que un disco lento
+        (antivirus escaneando, OneDrive sincronizando, etc.) no congele la
+        interfaz mientras tanto."""
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(wrapper, ensure_ascii=False), encoding="utf-8")
         tmp_path.replace(path)
+
+    def autosave(self, project: Project) -> Path:
+        """Guarda una copia de respaldo del estado actual del proyecto, sin
+        tocar ``project_file_path`` ni el archivo .dossierproj real. Version
+        sincrona (bloquea hasta terminar); la ventana principal usa en su
+        lugar ``build_autosave_wrapper`` + ``write_autosave_wrapper`` desde
+        un hilo de fondo (``AutosaveWorker``), para no congelar la interfaz."""
+        path = self.autosave_path(project)
+        wrapper = self.build_autosave_wrapper(project)
+        self.write_autosave_wrapper(wrapper, path)
         return path
 
     def discard_autosave(self, project: Project) -> None:
