@@ -714,6 +714,16 @@ página exacta tras las inserciones.
   documento firmado dentro de TUBERIA sigue respaldandose ahi con
   normalidad, como cualquier otro documento firmado en cualquier seccion;
   lo que ya no pasa es que se fuerce a los que no tienen firma.
+- **Las secciones de "Guias de Remision" nunca se respaldan, ni firmadas**:
+  pedido explicito de seguimiento al punto anterior. A diferencia de
+  cualquier otra seccion (donde el respaldo en `00_ORIGINALES_FIRMADOS/`
+  depende solo de si el documento tiene firma), una seccion cuyo titulo
+  contenga "GUIA(S) DE REMISION" (TUBERIA, HERRAMIENTAS, EQUIPO BES, etc.,
+  sin importar tildes/mayusculas: `DossierBuilder._is_guia_de_remision_section`)
+  nunca copia sus documentos ahi, **aunque tengan firma y se vayan a
+  aplanar con normalidad** -- esa carpeta es para los originales firmados
+  de certificados/documentos tecnicos, no para guias de remision. Es la
+  unica excepcion por titulo de seccion que existe sobre la regla general.
 
 ## Roadmap / Fase 4
 

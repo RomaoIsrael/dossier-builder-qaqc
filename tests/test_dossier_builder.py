@@ -12,6 +12,7 @@ from app.core.dossier_builder import (
     DossierBuilder,
     DossierGenerationError,
     _estimate_index_page_count,
+    _is_guia_de_remision_section,
     _render_index_document,
 )
 from app.models.document_model import DocumentItem, SignatureTreatment
@@ -420,6 +421,35 @@ def test_unsigned_documents_are_never_backed_up_to_originales_firmados(populated
     builder.generate(str(tmp_path))
 
     assert target_doc.backup_path is None
+
+
+def test_is_guia_de_remision_section_matches_regardless_of_accents_and_case():
+    assert _is_guia_de_remision_section("1.3 GUIAS DE REMISION (TUBERIA)")
+    assert _is_guia_de_remision_section("1.4 Guías de Remisión (Herramientas)")
+    assert _is_guia_de_remision_section("guia de remision")
+    assert not _is_guia_de_remision_section("2.2 TUBERIA")
+    assert not _is_guia_de_remision_section("2.4 EQUIPO BES")
+
+
+def test_guias_de_remision_section_never_backs_up_even_if_signed(populated_project, tmp_path):
+    """Pedido explicito: la seccion de "Guias de Remision" (TUBERIA,
+    HERRAMIENTAS, EQUIPO BES, etc.) nunca debe respaldarse en
+    00_ORIGINALES_FIRMADOS/, CON O SIN FIRMA. A diferencia del resto de
+    secciones (donde el respaldo depende solo de la firma), aqui ni siquiera
+    un documento explicitamente marcado para aplanar (firmado) debe
+    respaldarse."""
+    project, dyn = populated_project
+    sec_1_2 = _find(project.sections, "1.2")
+    sec_1_2.title = "GUIAS DE REMISION (TUBERIA)"
+    target_doc = sec_1_2.documents[0]
+    target_doc.signature_treatment = SignatureTreatment.FLATTEN
+
+    builder = DossierBuilder(project)
+    result = builder.generate(str(tmp_path))
+
+    assert result.flattened_count == 1  # se aplano con normalidad...
+    assert target_doc.flattened_path is not None
+    assert target_doc.backup_path is None  # ...pero nunca se respaldo.
 
 
 def test_flattened_document_backup_renamed_again_after_second_run(populated_project, tmp_path):

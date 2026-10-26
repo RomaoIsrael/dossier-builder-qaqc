@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,22 @@ class PreviewRow:
     document_id: Optional[str] = None
     source_path: Optional[str] = None  # archivo de origen (plantilla o documento), para vista con miniaturas
     source_page_index: int = 0  # pagina 0-based dentro de source_path a renderizar como miniatura
+
+
+def _normalize_text(text: str) -> str:
+    """Quita tildes y pasa a minusculas, para comparar titulos de seccion
+    sin depender de como el usuario escribio los acentos."""
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(c for c in decomposed if unicodedata.category(c) != "Mn").lower()
+
+
+def _is_guia_de_remision_section(title: str) -> bool:
+    """Las secciones de "Guias de Remision" (TUBERIA, HERRAMIENTAS, EQUIPO
+    BES, etc.) nunca deben respaldarse en 00_ORIGINALES_FIRMADOS/, tengan o
+    no firma sus documentos: pedido explicito, distinto del resto de
+    secciones (donde el respaldo depende solo de la firma)."""
+    normalized = _normalize_text(title)
+    return "guia" in normalized and "remision" in normalized
 
 
 def _valid_excluded_pages(doc: DocumentItem) -> set[int]:
@@ -244,7 +261,7 @@ class DossierBuilder:
         # -- 1. Preparar (backup + aplanado) de documentos firmados --------
         flattened_count = 0
         for section, doc in all_docs:
-            self._prepare_document(doc, dirs)
+            self._prepare_document(section, doc, dirs)
             if doc.status == DocumentStatus.FLATTENED:
                 flattened_count += 1
             tick(f"Procesando: {doc.name}")
@@ -618,7 +635,7 @@ class DossierBuilder:
             path.mkdir(parents=True, exist_ok=True)
         return dirs
 
-    def _prepare_document(self, doc: DocumentItem, dirs: dict[str, Path]) -> None:
+    def _prepare_document(self, section: SectionNode, doc: DocumentItem, dirs: dict[str, Path]) -> None:
         source = Path(doc.source_path)
         doc.file_size_bytes = source.stat().st_size
         doc.sha256_original = sha256_file(source)
@@ -633,7 +650,13 @@ class DossierBuilder:
             doc.status = DocumentStatus.OK
             return
 
-        if self.project.settings.keep_backup_of_signed_originals:
+        # Las secciones de "Guias de Remision" nunca se respaldan en
+        # 00_ORIGINALES_FIRMADOS/, tengan firma o no sus documentos (pedido
+        # explicito): esa carpeta es para los originales firmados de
+        # certificados/documentos tecnicos, no para guias de remision.
+        if self.project.settings.keep_backup_of_signed_originals and not _is_guia_de_remision_section(
+            section.title
+        ):
             backup_path = dirs["backup"] / f"{safe_filename(doc.name)}"
             if not backup_path.exists():
                 shutil.copy2(source, backup_path)
