@@ -9,6 +9,36 @@ def test_get_page_count(make_pdf):
     assert pdf_engine.get_page_count(path) == 4
 
 
+def test_page_has_oversized_image_false_for_page_without_images(make_pdf):
+    path = make_pdf(page_count=1, label="sin imagenes")
+    doc = fitz.open(path)
+    try:
+        assert pdf_engine.page_has_oversized_image(doc[0]) is False
+    finally:
+        doc.close()
+
+
+def test_page_has_oversized_image_detects_image_over_the_threshold(monkeypatch):
+    """No hace falta un archivo realmente gigante para probar esto: se
+    inserta una imagen chica de verdad y se baja el umbral
+    (MAX_SAFE_IMAGE_PIXELS) por debajo de su tamano real, para confirmar
+    que la comparacion funciona en ambos sentidos."""
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=200)
+    pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 50))
+    pixmap.set_rect(pixmap.irect, (255, 0, 0))
+    page.insert_image(fitz.Rect(0, 0, 100, 100), pixmap=pixmap)
+
+    try:
+        monkeypatch.setattr(pdf_engine, "MAX_SAFE_IMAGE_PIXELS", 50 * 50 - 1)
+        assert pdf_engine.page_has_oversized_image(page) is True
+
+        monkeypatch.setattr(pdf_engine, "MAX_SAFE_IMAGE_PIXELS", 50 * 50 + 1)
+        assert pdf_engine.page_has_oversized_image(page) is False
+    finally:
+        doc.close()
+
+
 def test_is_pdf_readable_ok(make_pdf):
     path = make_pdf(page_count=1)
     ok, err = pdf_engine.is_pdf_readable(path)

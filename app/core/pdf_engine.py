@@ -20,6 +20,42 @@ logger = get_logger("pdf_engine")
 
 _NUMBERING_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\.?\s+(.*)$")
 
+# Si una imagen incrustada en una pagina tiene mas pixeles que esto,
+# rasterizar esa pagina con get_pixmap() (miniaturas, vista previa, o el
+# aplanado de firmas) corre el riesgo de que MuPDF rechace la imagen
+# ("Overly large image", un limite de seguridad interno de la libreria) o,
+# peor, de que el intento de decodificarla haga fallar a la libreria a un
+# nivel que Python no puede interceptar con un try/except (un cierre
+# instantaneo y silencioso de toda la aplicacion -- visto en la practica
+# con un PDF real que contenia un escaneo de resolucion extrema). Por eso,
+# antes de llamar a get_pixmap() en cualquier parte del programa, conviene
+# revisar esto primero con page_has_oversized_image() y evitar el intento
+# por completo si da True, en vez de confiar solo en capturar la excepcion
+# despues. 60 megapixeles es un margen generoso por debajo de donde suelen
+# aparecer estos problemas (una foto de camara de 20-24 Mpx normal esta
+# muy por debajo de este umbral).
+MAX_SAFE_IMAGE_PIXELS = 60_000_000
+
+
+def page_has_oversized_image(page: "fitz.Page") -> bool:
+    """True si alguna imagen incrustada en ``page`` supera
+    ``MAX_SAFE_IMAGE_PIXELS``. Solo lee las dimensiones declaradas de cada
+    imagen (``page.get_images()``), sin decodificar su contenido: es
+    practicamente instantaneo y seguro de llamar siempre, incluso antes de
+    saber si la pagina se va a poder renderizar."""
+    try:
+        images = page.get_images(full=True)
+    except Exception:  # noqa: BLE001 - si ni siquiera esto se puede leer, mejor no arriesgar el render
+        return True
+    for image in images:
+        try:
+            width, height = image[2], image[3]
+        except (IndexError, TypeError):
+            continue
+        if width and height and width * height > MAX_SAFE_IMAGE_PIXELS:
+            return True
+    return False
+
 
 class PDFOpenError(Exception):
     """No se pudo abrir o leer un PDF."""

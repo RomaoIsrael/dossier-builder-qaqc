@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core import pdf_engine
 from app.core.dossier_builder import PreviewRow
 from app.core.section_suggester import suggest_sections_for_files
 from app.core.validator import Severity, ValidationReport
@@ -58,6 +59,15 @@ def render_pdf_page_image(doc: fitz.Document, page_index: int, max_width: int) -
         return None
     try:
         page = doc[page_index]
+        # Revision previa, sin decodificar nada: si la pagina trae una
+        # imagen incrustada excepcionalmente grande (un escaneo de
+        # resolucion extrema), ni siquiera se intenta renderizarla -- en la
+        # practica eso puede hacer fallar a la libreria de PDF a un nivel
+        # que ningun try/except de Python puede atrapar (ver pdf_engine.
+        # page_has_oversized_image). Mejor no mostrar esa miniatura que
+        # arriesgar un cierre de toda la aplicacion.
+        if pdf_engine.page_has_oversized_image(page):
+            return None
         zoom = max_width / max(page.rect.width, 1.0)
         matrix = fitz.Matrix(zoom, zoom)
         rendered = page.get_pixmap(matrix=matrix, alpha=False)
@@ -908,8 +918,26 @@ class PdfPreviewDialog(QDialog):
         if not self._doc:
             return
         page = self._doc[self._page_index]
+        # Revision previa, sin decodificar nada (ver pdf_engine.
+        # page_has_oversized_image): una imagen incrustada excepcionalmente
+        # grande puede hacer fallar a la libreria de PDF a un nivel que
+        # ningun try/except de Python puede atrapar. Se evita el intento.
+        if pdf_engine.page_has_oversized_image(page):
+            self.image_label.setText(
+                "Esta pagina contiene una imagen demasiado grande para mostrarla en la "
+                "vista previa.\n\nEl documento no esta danado: se puede seguir usando "
+                "con normalidad (agregar al dossier, aplanar, etc.), solo no se puede "
+                "previsualizar esta pagina en particular."
+            )
+            self.page_label.setText(f"Pagina {self._page_index + 1} / {self._doc.page_count}")
+            return
         matrix = fitz.Matrix(self._zoom, self._zoom)
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        try:
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+        except Exception as exc:  # noqa: BLE001 - una pagina irrenderizable no debe romper el dialogo
+            self.image_label.setText(f"No se pudo renderizar esta pagina:\n{exc}")
+            self.page_label.setText(f"Pagina {self._page_index + 1} / {self._doc.page_count}")
+            return
         image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
         self.image_label.setPixmap(QPixmap.fromImage(image))
         self.page_label.setText(f"Pagina {self._page_index + 1} / {self._doc.page_count}")

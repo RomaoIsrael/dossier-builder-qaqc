@@ -242,13 +242,13 @@ class MainWindow(QMainWindow):
         self._syncing_selection = False
         self._thumbnail_worker: Optional[ThumbnailRailWorker] = None
         self._autosave_worker: Optional[AutosaveWorker] = None
-        # Hilos de miniaturas "cancelados" (una nueva seccion/documento se
-        # selecciono antes de que terminaran de renderizar) que siguen
-        # corriendo de fondo: se mantienen vivos aqui hasta que realmente
-        # terminen solos. Ver _cancel_thumbnail_worker para el motivo exacto
-        # (critico: nunca se debe dejar que Python pierda la ultima
-        # referencia a un QThread mientras su run() todavia esta activo).
-        self._discarded_thumbnail_workers: list[ThumbnailRailWorker] = []
+        # Cualquier hilo de fondo (miniaturas, generacion) que se haya
+        # descartado/reemplazado mientras todavia seguia corriendo, se
+        # mantiene vivo aqui hasta que realmente termine solo. Ver
+        # _keep_worker_alive_until_finished para el motivo exacto (critico:
+        # nunca se debe dejar que Python pierda la ultima referencia a un
+        # QThread mientras su run() todavia esta activo).
+        self._discarded_workers: list[QThread] = []
 
         # Autoguardado: ademas de "Guardar" (explicito), el proyecto se
         # respalda solo mientras se trabaja, para no perder avances si la
@@ -421,26 +421,45 @@ class MainWindow(QMainWindow):
                 # El usuario eligio explicitamente no guardar: el autoguardado
                 # tambien se descarta, para no ofrecer "recuperarlo" despues.
                 self.project_service.discard_autosave(self.project)
-        self._wait_for_background_workers()
+
+        if not self._wait_for_background_workers():
+            QMessageBox.information(
+                self,
+                "Operacion en curso",
+                "Todavia hay una operacion en segundo plano en curso (generando el dossier, "
+                "cargando miniaturas o autoguardando) que no termino dentro del tiempo de "
+                "espera. Por seguridad, la aplicacion no se cierra todavia: espere unos "
+                "segundos y vuelva a intentar cerrarla. Si estaba generando el dossier, "
+                "tambien puede cancelarlo con el boton 'Cancelar' del cuadro de progreso.",
+            )
+            event.ignore()
+            return
         event.accept()
 
-    def _wait_for_background_workers(self) -> None:
+    def _wait_for_background_workers(self) -> bool:
         """Ultimo paso antes de cerrar la aplicacion: si algun hilo de fondo
         (miniaturas, autoguardado o generacion) todavia estuviera corriendo
         en este preciso momento, se espera a que termine en vez de dejar que
         la ventana se destruya con el hilo todavia activo -- ver
         _cancel_thumbnail_worker para el motivo exacto por el que eso puede
-        abortar toda la aplicacion de forma instantanea y silenciosa. Un
-        bloqueo breve aqui es preferible a ese riesgo; en la practica no
-        deberia notarse, porque la mayoria de estos hilos ya termino para
-        cuando el usuario llega a cerrar la ventana."""
-        candidates = list(self._discarded_thumbnail_workers)
+        abortar toda la aplicacion de forma instantanea y silenciosa.
+
+        Devuelve True si es seguro cerrar (nada seguia corriendo, o todo
+        termino dentro de la espera). Devuelve False si algo seguia
+        corriendo despues de esperar -- en ese caso NUNCA se debe cerrar la
+        ventana de todas formas: eso recrearia el mismo riesgo que esta
+        funcion existe para evitar. En la practica, la espera casi nunca se
+        nota: la mayoria de estos hilos ya termino para cuando el usuario
+        llega a cerrar la ventana."""
+        candidates = list(self._discarded_workers)
         candidates.extend(
             w for w in (self._thumbnail_worker, self._autosave_worker, self._generation_worker) if w is not None
         )
+        all_finished = True
         for worker in candidates:
-            if worker.isRunning():
-                worker.wait(5000)
+            if worker.isRunning() and not worker.wait(5000):
+                all_finished = False
+        return all_finished
 
     # ------------------------------------------------------------------
     # Construccion de la interfaz
@@ -1373,7 +1392,7 @@ class MainWindow(QMainWindow):
         mientras las miniaturas anteriores todavia se estaban generando.
 
         Ahora, si el hilo anterior sigue corriendo, se lo mantiene vivo en
-        ``self._discarded_thumbnail_workers`` hasta que termine solo (señal
+        ``self._discarded_workers`` hasta que termine solo (señal
         ``finished``, la real de QThread, no la propia ``finished_ok``) y
         recien ahi se libera. El resultado de un hilo descartado de todas
         formas no importa: sus señales ya quedaron desconectadas abajo.
@@ -1390,17 +1409,21 @@ class MainWindow(QMainWindow):
             worker.failed.disconnect(self._on_thumbnail_worker_failed)
         except (TypeError, RuntimeError):
             pass
-        self._keep_thumbnail_worker_alive_until_finished(worker)
+        self._keep_worker_alive_until_finished(worker)
 
-    def _keep_thumbnail_worker_alive_until_finished(self, worker: "ThumbnailRailWorker") -> None:
+    def _keep_worker_alive_until_finished(self, worker: QThread) -> None:
+        """Generico para cualquier QThread (no solo miniaturas): ver el
+        comentario en _cancel_thumbnail_worker para el motivo exacto por el
+        que esto es necesario antes de soltar la ultima referencia a un
+        hilo que todavia podria estar corriendo."""
         if not worker.isRunning():
             return
-        self._discarded_thumbnail_workers.append(worker)
-        worker.finished.connect(lambda w=worker: self._forget_discarded_thumbnail_worker(w))
+        self._discarded_workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._forget_discarded_worker(w))
 
-    def _forget_discarded_thumbnail_worker(self, worker: "ThumbnailRailWorker") -> None:
+    def _forget_discarded_worker(self, worker: QThread) -> None:
         try:
-            self._discarded_thumbnail_workers.remove(worker)
+            self._discarded_workers.remove(worker)
         except ValueError:
             pass
 
@@ -1475,7 +1498,7 @@ class MainWindow(QMainWindow):
         worker = self._thumbnail_worker
         self._thumbnail_worker = None
         if worker is not None:
-            self._keep_thumbnail_worker_alive_until_finished(worker)
+            self._keep_worker_alive_until_finished(worker)
         self._set_thumbnail_rail_busy(False)
 
     def _set_thumbnail_rail_busy(self, busy: bool) -> None:
@@ -1998,6 +2021,14 @@ class MainWindow(QMainWindow):
         self._progress_dialog.setWindowModality(Qt.WindowModal)
         self._progress_dialog.setMinimumDuration(0)
         self._progress_dialog.canceled.connect(self._cancel_generation)
+
+        # Igual que con las miniaturas (ver _cancel_thumbnail_worker): si por
+        # alguna razon todavia quedara un hilo de generacion anterior sin
+        # terminar del todo (p. ej. el usuario vuelve a generar apenas
+        # despues de un fallo), no se debe perder su referencia mientras
+        # Qt lo siga considerando en ejecucion.
+        if self._generation_worker is not None:
+            self._keep_worker_alive_until_finished(self._generation_worker)
 
         self._generation_worker = GenerationWorker(self.project, output_root, output_filename=output_filename)
         self._generation_worker.progress.connect(self._on_generation_progress)
