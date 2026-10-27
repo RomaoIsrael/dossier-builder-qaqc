@@ -724,6 +724,21 @@ página exacta tras las inserciones.
   aplanar con normalidad** -- esa carpeta es para los originales firmados
   de certificados/documentos tecnicos, no para guias de remision. Es la
   unica excepcion por titulo de seccion que existe sobre la regla general.
+- **Fix: "Fallo al aplanar ...: code=5: Overly large image"**. Un PDF con
+  una imagen incrustada de resolucion muy alta (un escaneo o captura de
+  pantalla) puede hacer que MuPDF rechace renderizarla a la resolucion de
+  aplanado configurada (450 DPI por defecto), por un limite de seguridad
+  interno de la libreria contra imagenes desproporcionadas -- no un error
+  del archivo. Antes, esto hacia fallar toda la generacion del dossier.
+  Ahora `flatten_pdf()` reintenta automaticamente a una resolucion menor
+  (`_DPI_FALLBACK_LADDER`: 300 -> 200 -> 150 -> 100 -> 72 DPI, solo los
+  peldanos por debajo de lo configurado) hasta que el renderizado funcione,
+  dejando registrado en el log que ese documento en particular se aplano a
+  menor resolucion. Si incluso el peldano mas bajo falla (imagen
+  excepcionalmente grande), el mensaje de error que ve el usuario ahora
+  explica la causa real y sugiere una solucion (reducir la imagen en el
+  PDF original, o usar "Conservar original" en vez de aplanar ese
+  documento) en vez de mostrar solo el codigo de error crudo de MuPDF.
 
 ## Roadmap / Fase 4
 

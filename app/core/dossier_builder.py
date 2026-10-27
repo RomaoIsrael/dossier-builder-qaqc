@@ -679,8 +679,28 @@ class DossierBuilder:
             )
         except FlattenError as exc:
             doc.status = DocumentStatus.ERROR
-            doc.error_message = str(exc)
-            raise DossierGenerationError(str(exc)) from exc
+            message = str(exc)
+            if "overly large image" in message.lower() or "too large" in message.lower():
+                # flatten_pdf() ya reintento automaticamente a resoluciones
+                # cada vez mas bajas (ver _DPI_FALLBACK_LADDER en
+                # flattener.py) antes de llegar hasta aqui: si de todas
+                # formas fallo, es porque alguna imagen dentro de ese PDF en
+                # particular es excepcionalmente grande (una foto o escaneo
+                # de muy alta resolucion incrustado en el archivo), no un
+                # problema de configuracion ni del resto del proyecto.
+                message = (
+                    f"{message}\n\n"
+                    f"Este PDF en particular ('{doc.name}') contiene una imagen incrustada "
+                    "demasiado grande para que la libreria de PDF pueda procesarla de forma "
+                    "segura, incluso luego de reintentar automaticamente a resoluciones mas "
+                    "bajas. No es un problema del resto del proyecto. Sugerencia: abra ese "
+                    "PDF con otro programa (por ejemplo, el editor con el que se genero) y "
+                    "reduzca la resolucion de la imagen antes de agregarlo de nuevo, o use "
+                    "'Conservar original' como tratamiento de firma para ese documento en vez "
+                    "de aplanarlo."
+                )
+            doc.error_message = message
+            raise DossierGenerationError(message) from exc
 
         doc.flattened_path = str(flat_path)
         doc.flatten_dpi = self.project.settings.flatten_dpi

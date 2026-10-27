@@ -16,6 +16,7 @@ siempre escribe en una ruta de salida nueva.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import fitz  # PyMuPDF
 
@@ -24,6 +25,16 @@ from app.services.logger import get_logger
 logger = get_logger("flattener")
 
 _VALID_DPI = (150, 200, 300, 450, 600)
+
+# Si aplanar a la resolucion configurada falla porque alguna imagen de la
+# pagina (un escaneo o captura de muy alta resolucion incrustada en el PDF
+# original) resulta "demasiado grande" para que MuPDF la decodifique de
+# forma segura ("Overly large image", un limite de seguridad interno de la
+# libreria contra imagenes desproporcionadas -- no un error del archivo en
+# si), se reintenta automaticamente con una resolucion menor en vez de
+# hacer fallar toda la generacion del dossier por un unico documento. Solo
+# se usan los peldanos por DEBAJO del DPI configurado.
+_DPI_FALLBACK_LADDER = (300, 200, 150, 100, 72)
 
 
 @dataclass
@@ -41,6 +52,11 @@ class FlattenError(Exception):
     """Fallo al rasterizar/aplanar un PDF."""
 
 
+def _is_image_too_large_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "overly large image" in message or "too large" in message
+
+
 def flatten_pdf(input_path: str, output_path: str, options: FlattenOptions | None = None) -> str:
     """Genera en ``output_path`` una copia rasterizada de ``input_path``.
 
@@ -49,12 +65,51 @@ def flatten_pdf(input_path: str, output_path: str, options: FlattenOptions | Non
     original, de modo que el resultado se vea igual pero ya no contenga
     texto/objetos vectoriales (ni, por lo tanto, el objeto de firma digital
     original).
+
+    Si a la resolucion configurada MuPDF rechaza alguna imagen de la pagina
+    por "demasiado grande" (ver ``_DPI_FALLBACK_LADDER``), se reintenta
+    automaticamente a una resolucion menor antes de darse por vencido.
     """
     options = options or FlattenOptions()
     if options.dpi not in _VALID_DPI:
         logger.warning("DPI %s fuera de los valores recomendados %s", options.dpi, _VALID_DPI)
 
-    zoom = options.dpi / 72.0
+    dpi_attempts = [options.dpi] + [d for d in _DPI_FALLBACK_LADDER if d < options.dpi]
+
+    last_error: Optional[FlattenError] = None
+    for attempt_dpi in dpi_attempts:
+        try:
+            _render_flattened_pdf(input_path, output_path, attempt_dpi, options)
+        except FlattenError as exc:
+            last_error = exc
+            is_last_attempt = attempt_dpi == dpi_attempts[-1]
+            if not _is_image_too_large_error(exc) or is_last_attempt:
+                raise
+            logger.warning(
+                "'%s': no se pudo aplanar a %d DPI (%s). Reintentando a menor resolucion...",
+                input_path,
+                attempt_dpi,
+                exc,
+            )
+            continue
+        else:
+            if attempt_dpi != options.dpi:
+                logger.warning(
+                    "'%s' se aplano a %d DPI en vez de los %d DPI configurados: a la resolucion "
+                    "configurada, alguna imagen del documento era demasiado grande para que la "
+                    "libreria de PDF (MuPDF) la procesara de forma segura. Esto no es un error "
+                    "del archivo, solo un limite interno de la libreria.",
+                    input_path,
+                    attempt_dpi,
+                    options.dpi,
+                )
+            return output_path
+
+    raise last_error  # pragma: no cover - dpi_attempts nunca queda vacio (siempre incluye options.dpi)
+
+
+def _render_flattened_pdf(input_path: str, output_path: str, dpi: int, options: FlattenOptions) -> None:
+    zoom = dpi / 72.0
     matrix = fitz.Matrix(zoom, zoom)
 
     try:
@@ -94,12 +149,10 @@ def flatten_pdf(input_path: str, output_path: str, options: FlattenOptions | Non
             input_path,
             output_path,
             src.page_count,
-            options.dpi,
+            dpi,
         )
     except Exception as exc:  # noqa: BLE001
         raise FlattenError(f"Fallo al aplanar '{input_path}': {exc}") from exc
     finally:
         src.close()
         out.close()
-
-    return output_path
