@@ -739,6 +739,43 @@ página exacta tras las inserciones.
   explica la causa real y sugiere una solucion (reducir la imagen en el
   PDF original, o usar "Conservar original" en vez de aplanar ese
   documento) en vez de mostrar solo el codigo de error crudo de MuPDF.
+- **Plantilla LDSS generada automaticamente desde Word**: al crear un
+  proyecto nuevo, en vez de subir siempre un PDF ya armado, se puede elegir
+  **LDSS** (`ChooseTemplateTypeDialog`) y la plantilla (caratula, indice y
+  caratula del CD) se genera sola:
+  - `assets/templates/ldss.docx` es la plantilla Word versionada con la
+    app, con sus secciones en estilos "Heading 1"/"Heading 2" (que Word
+    convierte automaticamente en marcadores del PDF al exportar -- no hace
+    falta construir bookmarks a mano) y 6 campos resaltados en amarillo
+    como guia visual: N.&deg; de Reacondicionamiento, Codigo, PAD, Pozo,
+    Locacion y Mes/Ano.
+  - `app/core/template_filler.py` completa esos 6 campos con los datos del
+    proyecto (pedidos en el mismo formulario de Metadatos, antes de crear
+    el proyecto), tanto en la portada como en la caratula del CD -- esta
+    ultima armada con cuadros de texto (`w:txbxContent`), que la API de
+    alto nivel de `python-docx` no ve por defecto, asi que se recorren a
+    mano via XML. El resto del documento (titulos, logos, Contrato,
+    Bloque) no se toca.
+  - `app/core/word_pdf_converter.py` convierte el Word ya completado a PDF
+    usando **Microsoft Word instalado en la maquina** (automatizacion COM
+    con `pywin32`, Windows unicamente) -- es el propio Word el que genera
+    los marcadores del PDF a partir de los encabezados, con maxima
+    fidelidad al diseno original (logos, resaltados, posicion exacta de
+    los cuadros de texto). Si Word no esta disponible, se avisa con un
+    mensaje claro y no se crea el proyecto (se puede reintentar o elegir
+    "Subir mi propio PDF" en su lugar).
+  - Nuevos campos en `ProjectMetadata`: `pad`, `locacion`, `mes`, `anio`
+    (los dos ultimos separados de `fecha`, que sigue siendo texto libre de
+    formato variable, para no mezclar usos).
+  - Validado de punta a punta contra la plantilla real provista: los 6
+    campos se completan correctamente en ambas paginas, los campos NO
+    pedidos (Contrato, Bloque) quedan intactos, y una conversion de prueba
+    a PDF (con LibreOffice, como verificacion estructural -- la app en si
+    usa Microsoft Word) confirmo que los marcadores (`/Outlines`) se
+    generan solos a partir de los encabezados.
+  - Pendiente (a pedido del usuario, se implementa cuando se suban las
+    plantillas correspondientes): las opciones "DOSSIER PERFORACION" y
+    "DOSSIER WO CAPEX" en el mismo selector.
 
 ## Roadmap / Fase 4
 

@@ -3,6 +3,15 @@ PyMuPDF>=1.24,<2.0
 pytest>=7.4
 pyinstaller>=6.0
 
+# Generacion automatica de la plantilla del dossier a partir de un Word
+# (ver app/core/template_filler.py, app/core/word_pdf_converter.py):
+python-docx>=1.1,<2.0
+# Automatizacion de Microsoft Word por COM para convertir el Word relleno
+# a PDF. Solo tiene sentido en Windows (unica plataforma soportada por la
+# app); el marcador de entorno evita que pip intente instalarlo en otro
+# sistema operativo, donde fallaria.
+pywin32>=306; sys_platform == "win32"
+
 # pikepdf no se usa en el MVP (ver README, seccion "Decisiones tecnicas").
 # Se deja documentado para cuando se implemente reparacion/validacion
 # estructural avanzada de PDF en una fase posterior:

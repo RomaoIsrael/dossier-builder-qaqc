@@ -7,7 +7,6 @@ from __future__ import annotations
 import sys
 import time
 import traceback
-from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPixmap
@@ -16,21 +15,13 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 from app.services.logger import setup_logging, get_logger
 from app.services.settings import SettingsService
 from app.ui.theme import apply_theme
+from app.utils.paths import resource_path
 
 logger = get_logger("main")
 
 
-def _resource_path(relative: str) -> Path:
-    """Resuelve una ruta a un recurso empaquetado (ej. ``assets/icon.ico``),
-    tanto corriendo desde el codigo fuente como ya compilado en un .exe con
-    PyInstaller (que extrae los datos agregados con ``--add-data`` a una
-    carpeta temporal indicada en ``sys._MEIPASS``)."""
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return base / relative
-
-
 def _load_app_icon() -> QIcon:
-    icon_path = _resource_path("assets/icon.ico")
+    icon_path = resource_path("assets/icon.ico")
     if icon_path.exists():
         return QIcon(str(icon_path))
     return QIcon()

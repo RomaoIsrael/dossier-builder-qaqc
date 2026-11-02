@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QTableWidget,
@@ -130,8 +132,10 @@ termina, sin que haya que hacer nada.</p>
 
 <h2>1. Flujo de trabajo general</h2>
 <ol>
-<li><b>Nuevo proyecto</b>: se crea el proyecto y se pide el nombre y luego la
-plantilla PDF (el documento base sobre el que se va a armar el dossier).</li>
+<li><b>Nuevo proyecto</b>: se crea el proyecto, se pide el nombre y luego se
+elige el tipo de plantilla: <b>LDSS</b> (se genera sola, pidiendo los datos
+del pozo) o <b>subir un PDF propio</b> ya armado. Ver seccion 2 para el
+detalle de cada opcion.</li>
 <li>Se revisan/editan las <b>secciones</b> detectadas en la plantilla (o se
 agregan subsecciones propias).</li>
 <li>Se <b>agregan los documentos</b> (PDF) a cada seccion, ya sea manualmente
@@ -151,10 +155,25 @@ misma computadora o en otra.</p>
 
 <h2>2. Barra de herramientas superior (fila &quot;Proyecto&quot;)</h2>
 <ul>
-<li><b>Nuevo proyecto</b>: crea un proyecto vacio. Pide el nombre del
-proyecto y despues muestra el aviso &quot;Elegir plantilla&quot; antes de abrir
-el explorador de archivos, para que se sepa que hay que seleccionar el PDF
-base.</li>
+<li><b>Nuevo proyecto</b>: crea un proyecto vacio. Pide el nombre y despues
+pregunta el <b>tipo de plantilla</b>:
+<ul>
+<li><b>LDSS</b>: la plantilla (caratula, indice y caratula del CD) se genera
+automaticamente a partir de un Word ya preparado con la aplicacion. Se
+piden los datos del proyecto (Pozo, N.&ordm; de Reacondicionamiento/WO,
+Codigo, PAD, Locaci&oacute;n, Mes y A&ntilde;o, entre otros) en el mismo
+formulario de <b>Metadatos</b> (ver secci&oacute;n 7); con esos datos se
+completa el Word y se convierte a PDF con <b>Microsoft Word</b> (tiene que
+estar instalado en esta computadora: la conversi&oacute;n usa el propio
+Word, para que el resultado se vea exactamente igual que el Word
+original, logos y formato incluidos). Si algo falla (por ejemplo, Word no
+est&aacute; instalado), se avisa con el motivo exacto y no se crea el
+proyecto; se puede reintentar o elegir la otra opci&oacute;n.</li>
+<li><b>Subir mi propio PDF ya armado</b>: el flujo de siempre -- se muestra
+el aviso &quot;Elegir plantilla&quot; y se abre el explorador de archivos
+para seleccionar un PDF que ya tenga su caratula, indice y paginas
+separadoras de secci&oacute;n con bookmarks.</li>
+</ul></li>
 <li><b>Abrir proyecto</b>: abre un archivo <code>.dossierproj</code> guardado
 previamente (propio o de otra persona/computadora).</li>
 <li><b>Proyectos recientes</b>: junto a "Abrir proyecto", este boton muestra
@@ -387,13 +406,24 @@ archivo indefinidamente.</p>
 
 <h2>7. Metadatos del proyecto</h2>
 <p>Formulario con los campos de encabezado del dossier: <i>Proyecto, Pozo,
-WO, Codigo, Contrato, Bloque, Fecha, Revision, Tipo</i>, y las propiedades
+WO (N.&ordm; de Reacondicionamiento), Codigo, Contrato, Bloque, PAD,
+Locaci&oacute;n, Fecha, A&ntilde;o, Revision, Tipo</i>, y las propiedades
 que se graban dentro del PDF final: <i>Titulo, Autor, Asunto y Palabras
-clave (PDF)</i>. Los primeros nueve campos tambien se pueden usar como
+clave (PDF)</i>. El campo <i>Mes</i> se elige de una lista (en vez de
+escribirlo) para que coincida siempre con lo que busca el generador de la
+plantilla LDSS. Todos los campos de encabezado tambien se pueden usar como
 variables (<code>{codigo}</code>, <code>{pozo}</code>, <code>{wo}</code>,
 <code>{tipo}</code>, <code>{revision}</code>, <code>{contrato}</code>,
-<code>{bloque}</code>) dentro del patron de nombre del archivo de salida,
-configurable en &quot;Configuracion&quot; o &quot;Preferencias&quot;.</p>
+<code>{bloque}</code>, <code>{pad}</code>, <code>{locacion}</code>,
+<code>{mes}</code>, <code>{anio}</code>) dentro del patron de nombre del
+archivo de salida, configurable en &quot;Configuracion&quot; o
+&quot;Preferencias&quot;.</p>
+<p>Al crear un proyecto nuevo con plantilla <b>LDSS</b> (ver secci&oacute;n
+2), este mismo formulario aparece primero, antes de crear el proyecto, para
+completar la plantilla con esos datos; despu&eacute;s se puede volver a
+abrir desde el bot&oacute;n <b>Metadatos</b> para corregir algo, igual que
+con cualquier otro proyecto (corregirlo ahi NO vuelve a regenerar la
+plantilla ya creada).</p>
 
 <h2>8. Configuracion del proyecto</h2>
 <ul>
@@ -579,6 +609,71 @@ class AuditLogDialog(QDialog):
             return value
 
 
+class ChooseTemplateTypeDialog(QDialog):
+    """Al crear un proyecto nuevo, elegir si la plantilla del dossier
+    (caratula + indice + paginas separadoras de seccion con sus marcadores)
+    se genera automaticamente a partir de una plantilla Word ya preparada
+    con la aplicacion, o si se sube un PDF propio ya armado (como se hacia
+    antes de que existiera esta opcion)."""
+
+    LDSS = "ldss"
+    CUSTOM = "custom"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tipo de plantilla del dossier")
+        self.setMinimumWidth(440)
+
+        layout = QVBoxLayout(self)
+        info = QLabel(
+            "Elegir como se arma la plantilla de este proyecto (caratula, indice y "
+            "paginas separadoras de cada seccion, con sus marcadores):"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self._group = QButtonGroup(self)
+        self._ldss_radio = QRadioButton(
+            "LDSS: se genera automaticamente, completando una plantilla Word con "
+            "los datos del proyecto (a continuacion se piden esos datos)."
+        )
+        self._ldss_radio.setWordWrap(True)
+        self._ldss_radio.setChecked(True)
+        self._custom_radio = QRadioButton(
+            "Subir mi propio PDF ya armado (con su indice y marcadores listos), como se "
+            "hacia antes."
+        )
+        self._custom_radio.setWordWrap(True)
+        self._group.addButton(self._ldss_radio)
+        self._group.addButton(self._custom_radio)
+        layout.addWidget(self._ldss_radio)
+        layout.addWidget(self._custom_radio)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_type(self) -> str:
+        return self.LDSS if self._ldss_radio.isChecked() else self.CUSTOM
+
+
+SPANISH_MONTHS = [
+    "ENERO",
+    "FEBRERO",
+    "MARZO",
+    "ABRIL",
+    "MAYO",
+    "JUNIO",
+    "JULIO",
+    "AGOSTO",
+    "SEPTIEMBRE",
+    "OCTUBRE",
+    "NOVIEMBRE",
+    "DICIEMBRE",
+]
+
+
 class MetadataDialog(QDialog):
     """Edicion de los campos de encabezado del proyecto (Pozo, WO, Codigo, etc.)."""
 
@@ -592,11 +687,14 @@ class MetadataDialog(QDialog):
         labels = {
             "proyecto": "Proyecto",
             "pozo": "Pozo",
-            "wo": "WO",
+            "wo": "WO / N.º de Reacondicionamiento",
             "codigo": "Codigo",
             "contrato": "Contrato",
             "bloque": "Bloque",
+            "pad": "PAD",
+            "locacion": "Locación",
             "fecha": "Fecha",
+            "anio": "Año",
             "revision": "Revision",
             "tipo": "Tipo",
             "titulo_pdf": "Titulo (PDF)",
@@ -609,6 +707,20 @@ class MetadataDialog(QDialog):
             self._fields[field_name] = edit
             form.addRow(label, edit)
 
+        # "mes" se edita con un combo (en vez de texto libre como el resto)
+        # para que coincida siempre, letra por letra, con el nombre de mes
+        # que se busca y reemplaza en las plantillas generadas desde Word
+        # (ver app.core.template_filler) -- un texto libre podria traer
+        # errores de tipeo que hagan que el reemplazo no encuentre nada.
+        self._mes_combo = QComboBox()
+        self._mes_combo.addItem("(sin elegir)", "")
+        for month in SPANISH_MONTHS:
+            self._mes_combo.addItem(month, month)
+        current_mes = (metadata.mes or "").strip().upper()
+        index = self._mes_combo.findData(current_mes)
+        self._mes_combo.setCurrentIndex(index if index >= 0 else 0)
+        form.addRow("Mes", self._mes_combo)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -619,6 +731,7 @@ class MetadataDialog(QDialog):
 
     def result_metadata(self) -> ProjectMetadata:
         data = {name: edit.text() for name, edit in self._fields.items()}
+        data["mes"] = self._mes_combo.currentData() or ""
         return ProjectMetadata(**data)
 
 

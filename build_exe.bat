@@ -32,8 +32,12 @@ pyinstaller --noconfirm --clean --onefile --windowed ^
     --name DossierBuilderQAQC ^
     --icon assets\icon.ico ^
     --add-data "assets\icon.ico;assets" ^
+    --add-data "assets\templates;assets\templates" ^
     --collect-all PySide6 ^
     --collect-submodules fitz ^
+    --collect-submodules docx ^
+    --hidden-import win32com.client ^
+    --hidden-import win32timezone ^
     main.py
 
 if errorlevel 1 (

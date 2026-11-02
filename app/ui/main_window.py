@@ -34,13 +34,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core import pdf_engine
+from app.core import pdf_engine, template_filler
 from app.core.bookmark_manager import build_section_tree_from_toc, renumber_sections
 from app.core.dossier_builder import CancelledError, DossierBuilder, DossierGenerationError, GenerationResult
 from app.core.project import ProjectError, ProjectService
 from app.core.signature_detector import detect_signatures
 from app.core.validator import validate_project
+from app.core.word_pdf_converter import WordConversionError
 from app.models.document_model import DocumentItem, DocumentStatus, SignatureTreatment
+from app.models.project_model import ProjectMetadata
 from app.models.section_model import SectionNode
 from app.services.database import DatabaseService
 from app.services.logger import get_logger
@@ -49,6 +51,7 @@ from app.ui.dialogs import (
     AboutDialog,
     AuditLogDialog,
     AutoDistributeDialog,
+    ChooseTemplateTypeDialog,
     DossierOutlinePreviewDialog,
     DossierThumbnailPreviewDialog,
     MetadataDialog,
@@ -716,10 +719,18 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
 
-        # Antes de abrir el explorador de archivos, se aclara que lo que se
-        # va a elegir es la PLANTILLA (caratula + indice + paginas
-        # separadoras con bookmarks), no un documento cualquiera: sin este
-        # aviso no queda claro que archivo hay que buscar ni para que.
+        choice_dialog = ChooseTemplateTypeDialog(self)
+        if not choice_dialog.exec():
+            return
+
+        if choice_dialog.selected_type() == ChooseTemplateTypeDialog.LDSS:
+            self._new_project_with_ldss_template(name.strip())
+        else:
+            self._new_project_with_uploaded_template(name.strip())
+
+    def _new_project_with_uploaded_template(self, name: str) -> None:
+        """Flujo original: el PDF de plantilla (caratula + indice + paginas
+        separadoras con bookmarks) ya viene armado y el usuario lo sube."""
         QMessageBox.information(
             self,
             "Elegir plantilla",
@@ -736,7 +747,7 @@ class MainWindow(QMainWindow):
         if not template_path:
             return
 
-        project = self.project_service.new_project(name.strip())
+        project = self.project_service.new_project(name)
         try:
             self._load_template_into_project(project, template_path)
         except (pdf_engine.PDFOpenError, pdf_engine.PDFPasswordProtectedError) as exc:
@@ -747,6 +758,54 @@ class MainWindow(QMainWindow):
         self.current_section_id = None
         self._dirty = False
         self._refresh_ui()
+
+    def _new_project_with_ldss_template(self, name: str) -> None:
+        """La plantilla (caratula + indice + caratula de CD) se genera sola:
+        se piden los datos del proyecto, se completan en la plantilla Word
+        de LDSS (ver app.core.template_filler) y se convierte a PDF con
+        Microsoft Word. Si algo falla, se avisa con un mensaje claro y no
+        se crea el proyecto (el usuario puede reintentar o elegir "Subir mi
+        propio PDF" en su lugar)."""
+        metadata_dialog = MetadataDialog(ProjectMetadata(proyecto=name), self)
+        metadata_dialog.setWindowTitle("Datos del proyecto (para completar la plantilla LDSS)")
+        if not metadata_dialog.exec():
+            return
+        metadata = metadata_dialog.result_metadata()
+        metadata.proyecto = metadata.proyecto or name
+
+        project = self.project_service.new_project(name)
+        project.metadata = metadata
+
+        self.statusBar().showMessage("Generando plantilla LDSS (completando el Word y convirtiendo a PDF)...")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            template_pdf_path = template_filler.generate_ldss_template_pdf(metadata, project.id)
+        except (template_filler.TemplateFillError, WordConversionError) as exc:
+            QMessageBox.critical(
+                self,
+                "No se pudo generar la plantilla LDSS",
+                f"{exc}\n\nPuede volver a intentarlo, o crear el proyecto de nuevo eligiendo "
+                "'Subir mi propio PDF ya armado' en su lugar.",
+            )
+            return
+        finally:
+            # Pase lo que pase (exito, error esperado, o algo inesperado que
+            # se escape sin capturar aqui), el cursor de espera y el aviso
+            # en la barra de estado nunca deben quedar pegados.
+            QApplication.restoreOverrideCursor()
+            self.statusBar().clearMessage()
+
+        try:
+            self._load_template_into_project(project, template_pdf_path)
+        except (pdf_engine.PDFOpenError, pdf_engine.PDFPasswordProtectedError) as exc:
+            QMessageBox.critical(self, "Error al leer la plantilla generada", str(exc))
+            return
+
+        self.project = project
+        self.current_section_id = None
+        self._dirty = False
+        self._refresh_ui()
+        self.statusBar().showMessage(f"Plantilla LDSS generada: {template_pdf_path}", 8000)
 
     def _load_template_into_project(self, project, template_path: str) -> None:
         toc = pdf_engine.extract_toc(template_path)

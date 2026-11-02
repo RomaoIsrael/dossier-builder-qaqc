@@ -27,6 +27,19 @@ class ProjectMetadata:
     revision: str = "0"
     tipo: str = ""
 
+    # PAD y locacion del pozo: usados, entre otras cosas, para completar
+    # automaticamente la caratula de plantillas generadas desde un Word
+    # (ver app.core.template_filler, plantilla LDSS).
+    pad: str = ""
+    locacion: str = ""
+
+    # Mes y ano por separado (no se derivan de "fecha", que es texto libre
+    # de formato variable): pensados para la caratula de plantillas como
+    # LDSS, que muestra "AGOSTO/2024" en la portada y solo "2024" en la
+    # caratula del CD.
+    mes: str = ""
+    anio: str = ""
+
     titulo_pdf: str = ""
     autor_pdf: str = ""
     asunto_pdf: str = ""
@@ -51,6 +64,10 @@ class ProjectMetadata:
             "fecha": self.fecha,
             "revision": self.revision,
             "tipo": self.tipo,
+            "pad": self.pad,
+            "locacion": self.locacion,
+            "mes": self.mes,
+            "anio": self.anio,
         }
 
 

@@ -37,6 +37,27 @@ def temp_root_dir() -> Path:
     return path
 
 
+def generated_templates_dir() -> Path:
+    """Directorio donde quedan las plantillas PDF generadas automaticamente
+    a partir de un Word (ver app.core.template_filler), una por proyecto.
+    Se guardan aqui (no en una carpeta temporal del sistema) porque
+    ``Project.template_path`` debe seguir siendo legible mientras el
+    proyecto exista, no solo durante la sesion en que se genero."""
+    path = app_data_dir() / "generated_templates"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def resource_path(relative: str) -> Path:
+    """Resuelve la ruta a un recurso empaquetado con la aplicacion (ej.
+    ``assets/icon.ico`` o ``assets/templates/ldss.docx``), tanto corriendo
+    desde el codigo fuente como ya compilado en un .exe con PyInstaller (que
+    extrae los datos agregados con ``--add-data`` a una carpeta temporal
+    indicada en ``sys._MEIPASS``)."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent.parent))
+    return base / relative
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
