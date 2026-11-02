@@ -632,22 +632,29 @@ class ChooseTemplateTypeDialog(QDialog):
         info.setWordWrap(True)
         layout.addWidget(info)
 
+        # QRadioButton no tiene setWordWrap (a diferencia de QLabel): el
+        # texto de cada opcion se mantiene corto para que entre en una sola
+        # linea con el ancho minimo del dialogo, y el detalle extra va en
+        # una etiqueta aparte debajo de cada radio.
         self._group = QButtonGroup(self)
-        self._ldss_radio = QRadioButton(
-            "LDSS: se genera automaticamente, completando una plantilla Word con "
-            "los datos del proyecto (a continuacion se piden esos datos)."
-        )
-        self._ldss_radio.setWordWrap(True)
+        self._ldss_radio = QRadioButton("LDSS (se genera automaticamente)")
         self._ldss_radio.setChecked(True)
-        self._custom_radio = QRadioButton(
-            "Subir mi propio PDF ya armado (con su indice y marcadores listos), como se "
-            "hacia antes."
+        ldss_detail = QLabel(
+            "    Completa una plantilla Word con los datos del proyecto (a "
+            "continuacion se piden esos datos) y la convierte a PDF."
         )
-        self._custom_radio.setWordWrap(True)
+        ldss_detail.setWordWrap(True)
+        self._custom_radio = QRadioButton("Subir mi propio PDF ya armado")
+        custom_detail = QLabel(
+            "    El PDF ya debe tener su indice y marcadores listos, como se hacia antes."
+        )
+        custom_detail.setWordWrap(True)
         self._group.addButton(self._ldss_radio)
         self._group.addButton(self._custom_radio)
         layout.addWidget(self._ldss_radio)
+        layout.addWidget(ldss_detail)
         layout.addWidget(self._custom_radio)
+        layout.addWidget(custom_detail)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
