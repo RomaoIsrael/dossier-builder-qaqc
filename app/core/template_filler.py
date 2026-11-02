@@ -250,6 +250,16 @@ def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
             missing,
         )
 
+    # El resaltado amarillo en la plantilla original es solo una guia visual
+    # para saber que datos hay que cambiar por pozo -- no debe aparecer en
+    # el documento final. Se quita de TODOS los runs (no solo los que se
+    # acaban de completar), para que nada quede resaltado por error aunque
+    # no haya sido reconocido por ninguna de las funciones de arriba.
+    for paragraph in _iter_all_paragraphs(document):
+        for run in paragraph.runs:
+            if run.font.highlight_color is not None:
+                run.font.highlight_color = None
+
     output_path = Path(output_docx_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:

@@ -64,6 +64,23 @@ def test_fill_ldss_template_substitutes_all_six_fields(tmp_path):
     assert "2025" in texts
 
 
+def test_fill_ldss_template_removes_all_highlighting(tmp_path):
+    """El resaltado amarillo de la plantilla original es solo una guia
+    visual para saber que datos cambiar por pozo: no debe quedar en el
+    documento final que termina convertido a PDF."""
+    output_path = tmp_path / "ldss_filled.docx"
+    template_filler.fill_ldss_template(_sample_metadata(), str(output_path))
+
+    document = docx.Document(str(output_path))
+    highlighted = [
+        run.text
+        for paragraph in template_filler._iter_all_paragraphs(document)
+        for run in paragraph.runs
+        if run.font.highlight_color is not None
+    ]
+    assert highlighted == []
+
+
 def test_fill_ldss_template_preserves_fixed_fields_not_in_the_six(tmp_path):
     """Contrato y bloque NO estan en la lista de 6 campos pedidos: deben
     quedar exactamente igual que en la plantilla original."""

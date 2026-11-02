@@ -22,9 +22,16 @@ from app.services.logger import get_logger
 
 logger = get_logger("word_pdf_converter")
 
-# Valor de wdExportFormat para PDF en la automatizacion COM de Word
-# (constante estable de la API de Word, no cambia entre versiones).
-_WD_EXPORT_FORMAT_PDF = 17
+# Constantes estables de la API de automatizacion de Word (no cambian entre
+# versiones; son las mismas que usa VBA).
+_WD_EXPORT_FORMAT_PDF = 17  # wdExportFormatPDF
+# CRITICO: sin pasar esto explicitamente, Word exporta el PDF SIN NINGUN
+# marcador por defecto (wdExportCreateNoBookmarks = 0), aunque la plantilla
+# tenga encabezados "Heading 1"/"Heading 2" -- confirmado en la practica
+# (el indice de secciones no se generaba). wdExportCreateHeadingBookmarks
+# le dice a Word que convierta esos encabezados en los marcadores del PDF,
+# que es todo el motivo de usar la conversion de Word en primer lugar.
+_WD_EXPORT_CREATE_HEADING_BOOKMARKS = 1
 
 
 class WordConversionError(Exception):
@@ -62,7 +69,11 @@ def convert_docx_to_pdf_with_word(docx_path: str, pdf_path: str) -> str:
         word.Visible = False
         word.DisplayAlerts = 0  # wdAlertsNone: no mostrar dialogos (ej. "formato no compatible")
         document = word.Documents.Open(docx_abs, ReadOnly=True)
-        document.ExportAsFixedFormat(pdf_abs, ExportFormat=_WD_EXPORT_FORMAT_PDF)
+        document.ExportAsFixedFormat(
+            pdf_abs,
+            ExportFormat=_WD_EXPORT_FORMAT_PDF,
+            CreateBookmarks=_WD_EXPORT_CREATE_HEADING_BOOKMARKS,
+        )
     except Exception as exc:  # noqa: BLE001 - cualquier error de COM/Word se traduce a un mensaje claro
         raise WordConversionError(
             f"No se pudo convertir '{docx_path}' a PDF con Microsoft Word: {exc}. "
