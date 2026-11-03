@@ -36,6 +36,19 @@ def _sample_wo_capex_metadata() -> ProjectMetadata:
     )
 
 
+def _sample_pci_metadata() -> ProjectMetadata:
+    return ProjectMetadata(
+        pozo="QWER-555Z",
+        wo="",  # PCI no usa numero de reacondicionamiento/WO
+        codigo="77H1111-QWER-05-PCI-444-3",
+        pad="PAD PRUEBA 7",
+        locacion="LOCACION PRUEBA",
+        mes="JUNIO",
+        anio="2028",
+        contrato="O-TEST-CONTRATO-999",
+    )
+
+
 def _all_paragraph_texts(document) -> list[str]:
     """Junta el texto de parrafos del cuerpo y de todos los cuadros de
     texto (la caratula del CD de estas plantillas esta hecha con cuadros
@@ -201,6 +214,85 @@ def test_fill_wo_capex_template_raises_clear_error_if_template_missing(tmp_path,
 
     with pytest.raises(template_filler.TemplateFillError):
         template_filler.fill_wo_capex_template(_sample_wo_capex_metadata(), str(tmp_path / "out.docx"))
+
+
+# -- PCI ----------------------------------------------------------------------
+
+
+def test_fill_pci_template_substitutes_all_fields(tmp_path):
+    """PCI comparte el mismo motor de reemplazo, pero sin numero de
+    reacondicionamiento/WO (es un evento unico, no repetido) y con el
+    pozo citado ademas dentro del texto explicativo de un par de
+    subsecciones (no solo en la caratula) -- ver
+    test_fill_pci_template_substitutes_inline_pozo_mentions."""
+    metadata = _sample_pci_metadata()
+    output_path = tmp_path / "pci_filled.docx"
+
+    template_filler.fill_pci_template(metadata, str(output_path))
+
+    assert output_path.exists()
+    document = docx.Document(str(output_path))
+    texts = _all_paragraph_texts(document)
+
+    assert "CONTRATO N.º: O-TEST-CONTRATO-999" in texts
+    assert "77H1111-QWER-05-PCI-444-3" in texts  # codigo "desnudo" en portada
+    assert "PAD: PAD PRUEBA 7" in texts
+    assert "POZO: QWER-555Z" in texts
+    assert "LOCACIÓN: LOCACION PRUEBA" in texts
+    assert "JUNIO/2028" in texts
+    assert "O-TEST-CONTRATO-999" in texts  # linea suelta del contrato en la caratula del CD
+
+
+def test_fill_pci_template_substitutes_inline_pozo_mentions(tmp_path):
+    """Pedido explicito del usuario: el pozo tambien aparece resaltado
+    dentro de una frase, citando el nombre de otro reporte (ej. '...Pozo
+    ACAR-276WIW', dentro del texto de la seccion 1.3 y 1.4), sin ninguna
+    etiqueta ni ser el parrafo entero resaltado. Debe reemplazarse igual,
+    sin tocar el resto de la frase."""
+    output_path = tmp_path / "pci_filled.docx"
+    template_filler.fill_pci_template(_sample_pci_metadata(), str(output_path))
+
+    document = docx.Document(str(output_path))
+    texts = _all_paragraph_texts(document)
+    inline_mentions = [t for t in texts if "Reporte Final" in t and "Pozo" in t]
+    assert len(inline_mentions) == 2
+    for text in inline_mentions:
+        assert "QWER-555Z" in text
+
+
+def test_fill_pci_template_removes_all_highlighting(tmp_path):
+    output_path = tmp_path / "pci_filled.docx"
+    template_filler.fill_pci_template(_sample_pci_metadata(), str(output_path))
+
+    document = docx.Document(str(output_path))
+    _assert_no_highlighting_remains(document)
+
+
+def test_fill_pci_template_preserves_bloque(tmp_path):
+    output_path = tmp_path / "pci_filled.docx"
+    template_filler.fill_pci_template(_sample_pci_metadata(), str(output_path))
+
+    document = docx.Document(str(output_path))
+    texts = _all_paragraph_texts(document)
+    assert "BLOQUE: 61" in texts
+
+
+def test_fill_pci_template_keeps_section_headings_intact(tmp_path):
+    output_path = tmp_path / "pci_filled.docx"
+    template_filler.fill_pci_template(_sample_pci_metadata(), str(output_path))
+
+    document = docx.Document(str(output_path))
+    headings = [p.text for p in document.paragraphs if p.style.name.startswith("Heading")]
+    assert "0.- DOCUMENTOS INICIALES" in headings
+    assert "1.- PERFORACIÓN" in headings
+    assert "10.- ANEXOS" in headings
+
+
+def test_fill_pci_template_raises_clear_error_if_template_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(template_filler, "resource_path", lambda relative: tmp_path / "no_existe.docx")
+
+    with pytest.raises(template_filler.TemplateFillError):
+        template_filler.fill_pci_template(_sample_pci_metadata(), str(tmp_path / "out.docx"))
 
 
 # -- Conversion a PDF (fuera de Windows) --------------------------------------

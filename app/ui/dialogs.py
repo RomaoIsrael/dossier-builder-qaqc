@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -133,9 +134,9 @@ termina, sin que haya que hacer nada.</p>
 <h2>1. Flujo de trabajo general</h2>
 <ol>
 <li><b>Nuevo proyecto</b>: se crea el proyecto, se pide el nombre y luego se
-elige el tipo de plantilla: <b>LDSS</b> o <b>WO CAPEX</b> (ambas se generan
-solas, pidiendo los datos del pozo) o <b>subir un PDF propio</b> ya armado.
-Ver seccion 2 para el detalle de cada opcion.</li>
+elige el tipo de plantilla: <b>LDSS</b>, <b>WO CAPEX</b> o <b>PCI</b>
+(las tres se generan solas, pidiendo los datos del pozo) o <b>subir un PDF
+propio</b> ya armado. Ver seccion 2 para el detalle de cada opcion.</li>
 <li>Se revisan/editan las <b>secciones</b> detectadas en la plantilla (o se
 agregan subsecciones propias).</li>
 <li>Se <b>agregan los documentos</b> (PDF) a cada seccion, ya sea manualmente
@@ -156,23 +157,28 @@ misma computadora o en otra.</p>
 <h2>2. Barra de herramientas superior (fila &quot;Proyecto&quot;)</h2>
 <ul>
 <li><b>Nuevo proyecto</b>: crea un proyecto vacio. Pide el nombre y despues
-pregunta el <b>tipo de plantilla</b>:
+pregunta el <b>tipo de plantilla</b>. Cada opcion se muestra como una
+<b>tarjeta</b> (titulo en negrita y una descripcion debajo) en la que se
+puede hacer clic en cualquier parte, no solo en el circulo, para que sea
+facil ver cual esta elegida:
 <ul>
-<li><b>LDSS</b> / <b>WO CAPEX</b>: la plantilla (caratula, indice y
-caratula del CD) se genera automaticamente a partir de un Word ya
-preparado con la aplicacion (una plantilla distinta para cada una). Se
-piden los datos del proyecto (Pozo, N.&ordm; de Reacondicionamiento/WO,
-Codigo, PAD, Locaci&oacute;n, Mes, A&ntilde;o y Contrato, entre otros) en
-el mismo formulario de <b>Metadatos</b> (ver secci&oacute;n 7) -- el
-Contrato viene precompletado con el ultimo que se uso, para no tener que
-volver a escribirlo cada vez; con esos datos se completa el Word y se
-convierte a PDF con <b>Microsoft Word</b> (tiene que estar instalado en
-esta computadora: la conversi&oacute;n usa el propio Word, para que el
-resultado se vea exactamente igual que el Word original, logos y formato
-incluidos, y para que sus encabezados se conviertan en los marcadores del
-PDF). Si algo falla (por ejemplo, Word no est&aacute; instalado), se avisa
-con el motivo exacto y no se crea el proyecto; se puede reintentar o
-elegir otra opci&oacute;n.</li>
+<li><b>LDSS</b> / <b>WO CAPEX</b> / <b>PCI</b>: la plantilla (caratula,
+indice y caratula del CD) se genera automaticamente a partir de un Word
+ya preparado con la aplicacion (una plantilla distinta para cada una; PCI
+es "Perforaci&oacute;n y Completaci&oacute;n Inicial", sin n&uacute;mero
+de reacondicionamiento/WO porque es un evento &uacute;nico, no repetido).
+Se piden los datos del proyecto (Pozo, N.&ordm; de Reacondicionamiento/WO
+cuando aplica, Codigo, PAD, Locaci&oacute;n, Mes, A&ntilde;o y Contrato,
+entre otros) en el mismo formulario de <b>Metadatos</b> (ver
+secci&oacute;n 7) -- el Contrato viene precompletado con el ultimo que se
+uso, para no tener que volver a escribirlo cada vez; con esos datos se
+completa el Word y se convierte a PDF con <b>Microsoft Word</b> (tiene
+que estar instalado en esta computadora: la conversi&oacute;n usa el
+propio Word, para que el resultado se vea exactamente igual que el Word
+original, logos y formato incluidos, y para que sus encabezados se
+conviertan en los marcadores del PDF). Si algo falla (por ejemplo, Word
+no est&aacute; instalado), se avisa con el motivo exacto y no se crea el
+proyecto; se puede reintentar o elegir otra opci&oacute;n.</li>
 <li><b>Subir mi propio PDF ya armado</b>: el flujo de siempre -- se muestra
 el aviso &quot;Elegir plantilla&quot; y se abre el explorador de archivos
 para seleccionar un PDF que ya tenga su caratula, indice y paginas
@@ -415,15 +421,15 @@ Locaci&oacute;n, Fecha, A&ntilde;o, Revision, Tipo</i>, y las propiedades
 que se graban dentro del PDF final: <i>Titulo, Autor, Asunto y Palabras
 clave (PDF)</i>. El campo <i>Mes</i> se elige de una lista (en vez de
 escribirlo) para que coincida siempre con lo que busca el generador de las
-plantillas LDSS/WO CAPEX. Todos los campos de encabezado tambien se pueden
+plantillas LDSS/WO CAPEX/PCI. Todos los campos de encabezado tambien se pueden
 usar como variables (<code>{codigo}</code>, <code>{pozo}</code>,
 <code>{wo}</code>, <code>{tipo}</code>, <code>{revision}</code>,
 <code>{contrato}</code>, <code>{bloque}</code>, <code>{pad}</code>,
 <code>{locacion}</code>, <code>{mes}</code>, <code>{anio}</code>) dentro
 del patron de nombre del archivo de salida, configurable en
 &quot;Configuracion&quot; o &quot;Preferencias&quot;.</p>
-<p>Al crear un proyecto nuevo con plantilla <b>LDSS</b> o <b>WO CAPEX</b>
-(ver secci&oacute;n 2), este mismo formulario aparece primero, antes de
+<p>Al crear un proyecto nuevo con plantilla <b>LDSS</b>, <b>WO CAPEX</b> o
+<b>PCI</b> (ver secci&oacute;n 2), este mismo formulario aparece primero, antes de
 crear el proyecto, para completar la plantilla con esos datos; el campo
 <b>Contrato</b> viene precompletado con el ultimo valor usado (se
 actualiza solo cada vez que se confirma el formulario, para no tener que
@@ -616,6 +622,51 @@ class AuditLogDialog(QDialog):
             return value
 
 
+class _TemplateOptionCard(QFrame):
+    """Una opcion del selector de plantilla, mostrada como una tarjeta
+    clickeable (no solo el circulo chico del radio, dificil de ver/tocar)
+    con un titulo en negrita y una descripcion debajo, con borde propio
+    que se resalta cuando esta seleccionada -- pensado para que se note
+    claramente cual es la opcion elegida, a diferencia de una simple lista
+    de radios sueltos."""
+
+    def __init__(self, key: str, title: str, detail: str, group: QButtonGroup, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setCursor(Qt.PointingHandCursor)
+
+        self.radio = QRadioButton(title)
+        self.radio.setStyleSheet("font-weight: 600; font-size: 11pt; border: none;")
+        group.addButton(self.radio)
+
+        detail_label = QLabel(detail)
+        detail_label.setWordWrap(True)
+        detail_label.setStyleSheet("color: palette(mid); border: none;")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(4)
+        layout.addWidget(self.radio)
+        layout.addWidget(detail_label)
+
+        self.radio.toggled.connect(self._update_style)
+        self._update_style(self.radio.isChecked())
+
+    def _update_style(self, checked: bool) -> None:
+        if checked:
+            self.setStyleSheet(
+                "_TemplateOptionCard { border: 2px solid palette(highlight); "
+                "border-radius: 6px; background-color: palette(alternate-base); }"
+            )
+        else:
+            self.setStyleSheet("_TemplateOptionCard { border: 1px solid palette(mid); border-radius: 6px; }")
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - nombre Qt
+        self.radio.setChecked(True)
+        super().mousePressEvent(event)
+
+
 class ChooseTemplateTypeDialog(QDialog):
     """Al crear un proyecto nuevo, elegir si la plantilla del dossier
     (caratula + indice + paginas separadoras de seccion con sus marcadores)
@@ -625,66 +676,69 @@ class ChooseTemplateTypeDialog(QDialog):
 
     LDSS = "ldss"
     WO_CAPEX = "wo_capex"
+    PCI = "pci"
     CUSTOM = "custom"
+
+    # (clave, titulo, detalle). Agregar una plantilla nueva es agregar una
+    # entrada aqui (y su logica de generacion en app.core.template_filler);
+    # el resto del dialogo (tarjetas, seleccion) sale solo de esta lista.
+    _OPTIONS = [
+        (
+            LDSS,
+            "LDSS (se genera automaticamente)",
+            "Completa una plantilla Word con los datos del proyecto (a continuacion se "
+            "piden esos datos) y la convierte a PDF.",
+        ),
+        (
+            WO_CAPEX,
+            "WO CAPEX (se genera automaticamente)",
+            "Igual que LDSS, pero con la plantilla de Workover CAPEX.",
+        ),
+        (
+            PCI,
+            "PCI - Perforacion y Completacion Inicial (se genera automaticamente)",
+            "Igual que LDSS, pero con la plantilla de Perforacion y Completacion Inicial.",
+        ),
+        (
+            CUSTOM,
+            "Subir mi propio PDF ya armado",
+            "El PDF ya debe tener su indice y marcadores listos, como se hacia antes.",
+        ),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tipo de plantilla del dossier")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(480)
 
         layout = QVBoxLayout(self)
         info = QLabel(
             "Elegir como se arma la plantilla de este proyecto (caratula, indice y "
-            "paginas separadoras de cada seccion, con sus marcadores):"
+            "paginas separadoras de cada seccion, con sus marcadores). Un clic en "
+            "cualquier parte de la tarjeta la selecciona:"
         )
         info.setWordWrap(True)
         layout.addWidget(info)
+        layout.addSpacing(6)
 
-        # QRadioButton no tiene setWordWrap (a diferencia de QLabel): el
-        # texto de cada opcion se mantiene corto para que entre en una sola
-        # linea con el ancho minimo del dialogo, y el detalle extra va en
-        # una etiqueta aparte debajo de cada radio.
         self._group = QButtonGroup(self)
-        self._ldss_radio = QRadioButton("LDSS (se genera automaticamente)")
-        self._ldss_radio.setChecked(True)
-        ldss_detail = QLabel(
-            "    Completa una plantilla Word con los datos del proyecto (a "
-            "continuacion se piden esos datos) y la convierte a PDF."
-        )
-        ldss_detail.setWordWrap(True)
-
-        self._wo_capex_radio = QRadioButton("WO CAPEX (se genera automaticamente)")
-        wo_capex_detail = QLabel(
-            "    Igual que LDSS, pero con la plantilla de Workover CAPEX."
-        )
-        wo_capex_detail.setWordWrap(True)
-
-        self._custom_radio = QRadioButton("Subir mi propio PDF ya armado")
-        custom_detail = QLabel(
-            "    El PDF ya debe tener su indice y marcadores listos, como se hacia antes."
-        )
-        custom_detail.setWordWrap(True)
-
-        self._group.addButton(self._ldss_radio)
-        self._group.addButton(self._wo_capex_radio)
-        self._group.addButton(self._custom_radio)
-        layout.addWidget(self._ldss_radio)
-        layout.addWidget(ldss_detail)
-        layout.addWidget(self._wo_capex_radio)
-        layout.addWidget(wo_capex_detail)
-        layout.addWidget(self._custom_radio)
-        layout.addWidget(custom_detail)
+        self._cards: dict[str, _TemplateOptionCard] = {}
+        for key, title, detail in self._OPTIONS:
+            card = _TemplateOptionCard(key, title, detail, self._group)
+            self._cards[key] = card
+            layout.addWidget(card)
+        self._cards[self.LDSS].radio.setChecked(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        layout.addSpacing(6)
         layout.addWidget(buttons)
 
     def selected_type(self) -> str:
-        if self._ldss_radio.isChecked():
-            return self.LDSS
-        if self._wo_capex_radio.isChecked():
-            return self.WO_CAPEX
+        for key, card in self._cards.items():
+            if card.radio.isChecked():
+                return key
         return self.CUSTOM
 
 

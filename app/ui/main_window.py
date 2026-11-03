@@ -728,6 +728,8 @@ class MainWindow(QMainWindow):
             self._new_project_with_ldss_template(name.strip())
         elif selected == ChooseTemplateTypeDialog.WO_CAPEX:
             self._new_project_with_wo_capex_template(name.strip())
+        elif selected == ChooseTemplateTypeDialog.PCI:
+            self._new_project_with_pci_template(name.strip())
         else:
             self._new_project_with_uploaded_template(name.strip())
 
@@ -769,6 +771,9 @@ class MainWindow(QMainWindow):
         self._new_project_with_generated_template(
             name, "WO CAPEX", template_filler.generate_wo_capex_template_pdf
         )
+
+    def _new_project_with_pci_template(self, name: str) -> None:
+        self._new_project_with_generated_template(name, "PCI", template_filler.generate_pci_template_pdf)
 
     def _new_project_with_generated_template(self, name: str, template_label: str, generate_pdf_fn) -> None:
         """La plantilla (caratula + indice + caratula de CD) se genera sola:

@@ -808,6 +808,35 @@ página exacta tras las inserciones.
   los de la plantilla original, confirmando que cada campo realmente se
   sustituye (no solo que coincide por casualidad) -- suite completa de
   tests corrida con `pytest` real (95 pruebas, todas en verde).
+- **Plantilla PCI (Perforacion y Completacion Inicial), tercera plantilla
+  generada automaticamente**: mismo motor compartido en
+  `app/core/template_filler.py` (`assets/templates/pci.docx`), con dos
+  diferencias reales que el motor ya contempla:
+  - PCI no tiene numero de reacondicionamiento/WO (es un evento unico, no
+    repetido como LDSS/WO CAPEX): `_fill_template()` ahora recibe por
+    plantilla que campos son realmente esperados
+    (`expected_fields`/`_FIELDS_PCI` vs. `_FIELDS_LDSS_WO_CAPEX`), para no
+    advertir por un campo que esa plantilla nunca tuvo.
+  - El pozo tambien aparece resaltado **dentro del texto explicativo** de
+    un par de subsecciones (citando el nombre de otro reporte, ej. "...Pozo
+    ACAR-276WIW", sin ninguna etiqueta ni ser el parrafo entero resaltado)
+    -- pedido explicito del usuario, confirmado en sus paginas 21 y 23.
+    Nueva regla de "ultimo recurso" `_fill_inline_pozo_mention()`: si un
+    parrafo tiene resaltado pero no coincidio con ninguna regla mas
+    especifica, se asume que es una mencion del pozo dentro de una frase y
+    se reemplaza solo esa parte, sin tocar el resto del texto.
+  - Validado de punta a punta contra la plantilla real (incluye las dos
+    menciones dentro del texto, en `tests/test_template_filler.py`).
+- **Selector de tipo de plantilla rediseñado (mas visible)**: a pedido del
+  usuario ("no es muy visible"), `ChooseTemplateTypeDialog` paso de una
+  lista de radios sueltos a **tarjetas clickeables**
+  (`_TemplateOptionCard`, en `app/ui/dialogs.py`): titulo en negrita,
+  descripcion debajo, borde propio que se resalta con el color de acento
+  del tema activo cuando esta seleccionada, y un clic en cualquier parte de
+  la tarjeta (no solo el circulo chico del radio) la selecciona. La lista
+  de opciones es ahora una tabla de datos (clave, titulo, detalle) en vez
+  de un bloque de codigo por cada radio, para que agregar una plantilla
+  nueva en el futuro sea una linea, no repetir la estructura entera.
 
 ## Roadmap / Fase 4
 

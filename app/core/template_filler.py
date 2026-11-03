@@ -43,6 +43,7 @@ logger = get_logger("template_filler")
 
 LDSS_TEMPLATE_RESOURCE = "assets/templates/ldss.docx"
 WO_CAPEX_TEMPLATE_RESOURCE = "assets/templates/wo_capex.docx"
+PCI_TEMPLATE_RESOURCE = "assets/templates/pci.docx"
 
 _NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -243,6 +244,22 @@ def _fill_cd_pozo_wo_line(paragraph, pozo: str, wo_number: str) -> bool:
     return True
 
 
+def _fill_inline_pozo_mention(paragraph, pozo: str) -> bool:
+    """Ultimo recurso, probado despues de todas las reglas anteriores: si
+    un parrafo tiene resaltado en amarillo pero no coincidio con ninguna
+    etiqueta conocida ni con el patron de la fecha ni con un valor
+    'desnudo' tipo codigo/ano, se asume que es una mencion del pozo
+    dentro de una frase (ej., en la plantilla PCI, '...Reporte Final de
+    Perforacion Pozo ACAR-276WIW', citado dentro del texto explicativo de
+    una subseccion, con el resto de la frase sin resaltar). Reemplaza
+    solo los runs resaltados, dejando el resto de la frase intacta."""
+    highlighted = _highlighted_runs(paragraph)
+    if not highlighted:
+        return False
+    _set_run_group_text(highlighted, pozo)
+    return True
+
+
 def _fill_common_fields(document, metadata: ProjectMetadata) -> dict[str, int]:
     """Aplica todas las reglas de reemplazo conocidas (compartidas entre
     LDSS y WO CAPEX, que usan la misma convencion de resaltado) sobre TODOS
@@ -266,6 +283,7 @@ def _fill_common_fields(document, metadata: ProjectMetadata) -> dict[str, int]:
         "locacion": 0,
         "mes_anio": 0,
         "contrato": 0,
+        "pozo_inline": 0,
     }
 
     for paragraph in _iter_all_paragraphs(document):
@@ -290,6 +308,8 @@ def _fill_common_fields(document, metadata: ProjectMetadata) -> dict[str, int]:
             counts["codigo"] += 1
         elif _fill_bare_contrato(paragraph, contrato):
             counts["contrato"] += 1
+        elif _fill_inline_pozo_mention(paragraph, pozo):
+            counts["pozo_inline"] += 1
 
     return counts
 
@@ -306,7 +326,18 @@ def _clear_all_highlighting(document) -> None:
                 run.font.highlight_color = None
 
 
-def _fill_template(template_resource: str, template_label: str, metadata: ProjectMetadata, output_docx_path: str) -> str:
+def _fill_template(
+    template_resource: str,
+    template_label: str,
+    metadata: ProjectMetadata,
+    output_docx_path: str,
+    expected_fields: Optional[set] = None,
+) -> str:
+    """``expected_fields``: nombres de campo (ver claves de ``_fill_common_
+    fields``) que esta plantilla en particular deberia encontrar al menos
+    una vez; por defecto, todos. Algunas plantillas no tienen todos los
+    campos (ej. PCI no tiene numero de reacondicionamiento/WO), asi que no
+    tiene sentido advertir por esos como si faltaran."""
     template_path = resource_path(template_resource)
     if not template_path.exists():
         raise TemplateFillError(f"No se encontro la plantilla {template_label} en '{template_path}'.")
@@ -317,7 +348,8 @@ def _fill_template(template_resource: str, template_label: str, metadata: Projec
         raise TemplateFillError(f"No se pudo abrir la plantilla {template_label}: {exc}") from exc
 
     counts = _fill_common_fields(document, metadata)
-    missing = [name for name, count in counts.items() if count == 0]
+    fields_to_check = expected_fields if expected_fields is not None else set(counts)
+    missing = [name for name in fields_to_check if counts.get(name, 0) == 0]
     if missing:
         logger.warning(
             "La plantilla %s no tenia (o no se reconocio) el campo esperado %s. "
@@ -338,6 +370,27 @@ def _fill_template(template_resource: str, template_label: str, metadata: Projec
     return str(output_path)
 
 
+_FIELDS_LDSS_WO_CAPEX = {
+    "reacondicionamiento",
+    "codigo",
+    "pad",
+    "pozo",
+    "locacion",
+    "mes_anio",
+    "contrato",
+}
+
+_FIELDS_PCI = {
+    "codigo",
+    "pad",
+    "pozo",
+    "locacion",
+    "mes_anio",
+    "contrato",
+    "pozo_inline",
+}
+
+
 def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
     """Genera en ``output_docx_path`` una copia de la plantilla LDSS con los
     campos variables completados (numero de reacondicionamiento, codigo,
@@ -346,13 +399,23 @@ def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
     queda tal cual esta en la plantilla original -- incluidos sus
     encabezados Word, que luego se convierten en los marcadores del PDF
     final."""
-    return _fill_template(LDSS_TEMPLATE_RESOURCE, "LDSS", metadata, output_docx_path)
+    return _fill_template(LDSS_TEMPLATE_RESOURCE, "LDSS", metadata, output_docx_path, _FIELDS_LDSS_WO_CAPEX)
 
 
 def fill_wo_capex_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
     """Igual que ``fill_ldss_template``, para la plantilla WO CAPEX (misma
     convencion de campos resaltados, mismo motor de reemplazo)."""
-    return _fill_template(WO_CAPEX_TEMPLATE_RESOURCE, "WO CAPEX", metadata, output_docx_path)
+    return _fill_template(WO_CAPEX_TEMPLATE_RESOURCE, "WO CAPEX", metadata, output_docx_path, _FIELDS_LDSS_WO_CAPEX)
+
+
+def fill_pci_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
+    """Igual que ``fill_ldss_template``, para la plantilla PCI (Perforacion
+    y Completacion Inicial). A diferencia de LDSS/WO CAPEX, PCI no tiene
+    numero de reacondicionamiento/WO (es un evento unico, no un
+    reacondicionamiento repetido), y ademas menciona el pozo dentro del
+    texto explicativo de un par de subsecciones (no solo en la caratula),
+    ver ``_fill_inline_pozo_mention``."""
+    return _fill_template(PCI_TEMPLATE_RESOURCE, "PCI", metadata, output_docx_path, _FIELDS_PCI)
 
 
 def _generate_template_pdf(fill_fn, project_suffix: str, metadata: ProjectMetadata, project_id: str) -> str:
@@ -384,3 +447,8 @@ def generate_ldss_template_pdf(metadata: ProjectMetadata, project_id: str) -> st
 def generate_wo_capex_template_pdf(metadata: ProjectMetadata, project_id: str) -> str:
     """Igual que ``generate_ldss_template_pdf``, para la plantilla WO CAPEX."""
     return _generate_template_pdf(fill_wo_capex_template, "wo_capex", metadata, project_id)
+
+
+def generate_pci_template_pdf(metadata: ProjectMetadata, project_id: str) -> str:
+    """Igual que ``generate_ldss_template_pdf``, para la plantilla PCI."""
+    return _generate_template_pdf(fill_pci_template, "pci", metadata, project_id)
