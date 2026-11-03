@@ -16,6 +16,13 @@ Word via automatizacion COM, Windows unicamente). Los encabezados ("Heading
 automaticamente durante esa conversion (comportamiento estandar de Word),
 asi que el PDF resultante se puede usar como ``project.template_path``
 exactamente igual que un PDF preparado y subido a mano.
+
+Las plantillas LDSS y WO CAPEX comparten la misma convencion de campos
+resaltados en amarillo (etiqueta fija + valor resaltado, o un valor
+"desnudo" en la caratula del CD), asi que las reglas de reemplazo de abajo
+son un mismo motor compartido entre ambas -- cada plantilla nueva que siga
+esta convencion solo necesita su propio archivo .docx y una funcion
+``fill_*``/``generate_*`` de 3 lineas (ver el final del modulo).
 """
 from __future__ import annotations
 
@@ -35,11 +42,25 @@ from app.utils.paths import generated_templates_dir, resource_path
 logger = get_logger("template_filler")
 
 LDSS_TEMPLATE_RESOURCE = "assets/templates/ldss.docx"
+WO_CAPEX_TEMPLATE_RESOURCE = "assets/templates/wo_capex.docx"
 
 _NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 _CODE_LIKE_RE = re.compile(r"^[A-Z0-9][A-Z0-9\-]{8,}$")
 _YEAR_LIKE_RE = re.compile(r"^\d{4}$")
+
+# El numero de reacondicionamiento aparece con distinta etiqueta fija segun
+# la plantilla: "REACONDICIONAMIENTO #01" en la portada de LDSS, o partido
+# en dos parrafos en la caratula del CD de WO CAPEX ("REACONDICIONAMIENTO"
+# + "CAPEX #02"). Se aceptan ambos prefijos conocidos.
+_REACONDICIONAMIENTO_PREFIXES = ("REACONDICIONAMIENTO #", "CAPEX #")
+
+# Valor que ambas plantillas traen hoy para el numero de contrato, en la
+# linea "desnuda" (sin etiqueta) de la caratula del CD -- a diferencia del
+# resto de campos, el contrato no viene resaltado en amarillo (es el mismo
+# para todos los proyectos actuales), asi que se identifica por coincidir
+# exactamente con este valor conocido en vez de por resaltado.
+_KNOWN_CONTRATO_PLACEHOLDER = "O-02158-PAM-EP-2015"
 
 
 class TemplateFillError(Exception):
@@ -55,7 +76,7 @@ def _iter_all_paragraphs(document):
     """Recorre TODOS los parrafos del documento: los del cuerpo normal
     (``document.paragraphs``) y, ademas, los que estan dentro de cuadros de
     texto (``w:txbxContent``), que ``document.paragraphs`` no alcanza a ver.
-    La caratula del CD de la plantilla LDSS esta armada enteramente con
+    La caratula del CD de estas plantillas esta armada enteramente con
     cuadros de texto posicionados sobre el dibujo del CD."""
     yield from document.paragraphs
     fallback_parent = document.paragraphs[0]._parent if document.paragraphs else document.element.body
@@ -91,7 +112,8 @@ def _set_run_group_text(runs: list, new_text: str) -> None:
 
 
 def _fill_reacondicionamiento(paragraph, wo_number: str) -> bool:
-    if not paragraph.text.strip().upper().startswith("REACONDICIONAMIENTO #"):
+    normalized = paragraph.text.strip().upper()
+    if not any(normalized.startswith(prefix) for prefix in _REACONDICIONAMIENTO_PREFIXES):
         return False
     highlighted = _highlighted_runs(paragraph)
     if not highlighted:
@@ -117,15 +139,54 @@ def _fill_labeled_field(paragraph, label_prefix: str, value: str) -> bool:
     return True
 
 
+def _fill_contrato_label(paragraph, contrato: str) -> bool:
+    """'CONTRATO N.º: O-02158-PAM-EP-2015' en la portada: a diferencia de
+    los demas campos, el contrato NO viene resaltado en las plantillas (es
+    el mismo para todos los proyectos actuales), pero se completa igual con
+    el valor del proyecto para quedar listo si algun dia cambia. En ambas
+    plantillas el valor comparte run con el separador ':' de la etiqueta
+    (ej. un run con el texto ': O-02158-PAM-EP-2015'), asi que se ubica ese
+    run por el caracter ':' y se reemplaza todo lo que sigue."""
+    normalized = _strip_accents(paragraph.text.strip()).upper()
+    if not normalized.startswith("CONTRATO"):
+        return False
+    runs = [r for r in paragraph.runs if r.text]
+    for index, run in enumerate(runs):
+        if ":" in run.text:
+            label_part = run.text.split(":", 1)[0]
+            run.text = f"{label_part}: {contrato}"
+            for later_run in runs[index + 1 :]:
+                later_run.text = ""
+            return True
+    return False
+
+
+def _fill_bare_contrato(paragraph, contrato: str) -> bool:
+    """Linea suelta en la caratula del CD con el numero de contrato, sin
+    ninguna etiqueta ni resaltado (es igual en ambas plantillas actuales:
+    'O-02158-PAM-EP-2015'). Se identifica por coincidir exactamente con ese
+    valor conocido; si la plantilla cambiara ese numero, esta regla
+    simplemente dejaria de aplicar ahi (no rompe nada, solo no completa esa
+    linea en particular)."""
+    if paragraph.text.strip() != _KNOWN_CONTRATO_PLACEHOLDER:
+        return False
+    runs = [r for r in paragraph.runs if r.text]
+    if not runs:
+        return False
+    _set_run_group_text(runs, contrato)
+    return True
+
+
 def _fill_mes_anio_cover(paragraph, mes: str, anio: str) -> bool:
-    """La fecha de portada ('AGOSTO/2024') no tiene ninguna etiqueta fija y
-    todo el parrafo le pertenece a ella sola: se identifica porque contiene
-    '/' y tiene al menos un run resaltado. A diferencia de los demas campos,
-    aqui el separador '/' (y a veces un espacio final) son SUS PROPIOS runs
-    SIN resaltar intercalados entre los resaltados (ej. 'AGOSTO'[amarillo],
-    '/'[sin resaltar], '202'[amarillo], '4'[amarillo], ' '[sin resaltar]),
-    asi que no alcanza con tocar solo los runs resaltados: hay que
-    reemplazar TODOS los runs del parrafo por el valor completo nuevo."""
+    """La fecha ('AGOSTO/2024', 'DICIEMBRE / 2024') no tiene ninguna
+    etiqueta fija y todo el parrafo le pertenece a ella sola: se identifica
+    porque contiene '/' y tiene al menos un run resaltado. A diferencia de
+    los demas campos, aqui el separador '/' (y a veces espacios) son SUS
+    PROPIOS runs SIN resaltar intercalados entre los resaltados, asi que no
+    alcanza con tocar solo los runs resaltados: hay que reemplazar TODOS
+    los runs del parrafo por el valor completo nuevo. Aplica igual en la
+    portada y, si la plantilla tambien repite la fecha ahi, en la caratula
+    del CD."""
     if "/" not in paragraph.text:
         return False
     if not _highlighted_runs(paragraph):
@@ -138,11 +199,11 @@ def _fill_mes_anio_cover(paragraph, mes: str, anio: str) -> bool:
 
 
 def _fill_bare_codigo_or_anio(paragraph, codigo: str, anio: str) -> bool:
-    """En la caratula del CD, el codigo del documento y el ano aparecen
-    'desnudos' (sin ninguna etiqueta tipo 'CODIGO:') dentro de su propio
-    parrafo, enteramente resaltado. Se distinguen entre si por forma: el
-    codigo es una cadena alfanumerica larga con guiones, el ano son 4
-    digitos solos."""
+    """En la caratula del CD (y, en WO CAPEX, tambien en la portada), el
+    codigo del documento y el ano a veces aparecen 'desnudos' (sin ninguna
+    etiqueta tipo 'CODIGO:') dentro de su propio parrafo, enteramente
+    resaltado. Se distinguen entre si por forma: el codigo es una cadena
+    alfanumerica larga con guiones, el ano son 4 digitos solos."""
     if not _is_fully_highlighted(paragraph):
         return False
     text = paragraph.text.strip().upper()
@@ -157,11 +218,12 @@ def _fill_bare_codigo_or_anio(paragraph, codigo: str, anio: str) -> bool:
 
 
 def _fill_cd_pozo_wo_line(paragraph, pozo: str, wo_number: str) -> bool:
-    """Linea 'LDSS CLBC-058H WO#01' de la caratula del CD: el pozo y el
-    numero de WO estan en el MISMO grupo de runs resaltados, uno despues
-    del otro (sin etiqueta propia para cada uno). Se ubica el ultimo run
-    resaltado que empieza con 'WO#' como el valor de WO; todo lo resaltado
-    ANTES de ese run es el pozo."""
+    """Linea 'LDSS CLBC-058H WO#01' de la caratula del CD de LDSS: el pozo
+    y el numero de WO estan en el MISMO grupo de runs resaltados, uno
+    despues del otro (sin etiqueta propia para cada uno). Se ubica el
+    ultimo run resaltado que empieza con 'WO#' como el valor de WO; todo lo
+    resaltado ANTES de ese run es el pozo. No aplica a WO CAPEX (que separa
+    pozo y WO en parrafos distintos, ya cubiertos por otras reglas)."""
     if not paragraph.text.strip().upper().startswith("LDSS"):
         return False
     highlighted = _highlighted_runs(paragraph)
@@ -181,17 +243,12 @@ def _fill_cd_pozo_wo_line(paragraph, pozo: str, wo_number: str) -> bool:
     return True
 
 
-def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
-    """Genera en ``output_docx_path`` una copia de la plantilla LDSS con los
-    6 campos variables completados (numero de reacondicionamiento, codigo,
-    PAD, pozo, locacion, mes/ano), tanto en la portada como en la caratula
-    del CD. El resto del documento (secciones, titulos, logos) queda tal
-    cual esta en la plantilla original -- incluidos sus encabezados Word,
-    que luego se convierten en los marcadores del PDF final."""
-    template_path = resource_path(LDSS_TEMPLATE_RESOURCE)
-    if not template_path.exists():
-        raise TemplateFillError(f"No se encontro la plantilla LDSS en '{template_path}'.")
-
+def _fill_common_fields(document, metadata: ProjectMetadata) -> dict[str, int]:
+    """Aplica todas las reglas de reemplazo conocidas (compartidas entre
+    LDSS y WO CAPEX, que usan la misma convencion de resaltado) sobre TODOS
+    los parrafos del documento -- cuerpo y cuadros de texto. Devuelve
+    cuantas veces se reconocio cada campo, para poder avisar si alguno no
+    se encontro ni una sola vez."""
     wo_number = (metadata.wo or "").strip() or "00"
     codigo = (metadata.codigo or "").strip()
     pad = (metadata.pad or "").strip()
@@ -199,66 +256,77 @@ def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
     locacion = (metadata.locacion or "").strip()
     mes = (metadata.mes or "").strip().upper()
     anio = (metadata.anio or "").strip()
+    contrato = (metadata.contrato or "").strip()
 
-    try:
-        document = docx.Document(str(template_path))
-    except Exception as exc:  # noqa: BLE001 - un .docx danado no debe tumbar nada
-        raise TemplateFillError(f"No se pudo abrir la plantilla LDSS: {exc}") from exc
-
-    filled_any = {
-        "reacondicionamiento": False,
-        "codigo": False,
-        "pad": False,
-        "pozo": False,
-        "locacion": False,
-        "mes_anio": False,
-        "cd_codigo_o_anio": False,
-        "cd_pozo_wo": False,
+    counts = {
+        "reacondicionamiento": 0,
+        "codigo": 0,
+        "pad": 0,
+        "pozo": 0,
+        "locacion": 0,
+        "mes_anio": 0,
+        "contrato": 0,
     }
 
     for paragraph in _iter_all_paragraphs(document):
         if _fill_reacondicionamiento(paragraph, wo_number):
-            filled_any["reacondicionamiento"] = True
-            continue
-        if _fill_labeled_field(paragraph, "CODIGO:", codigo):
-            filled_any["codigo"] = True
-            continue
-        if _fill_labeled_field(paragraph, "PAD:", pad):
-            filled_any["pad"] = True
-            continue
-        if _fill_labeled_field(paragraph, "POZO:", pozo):
-            filled_any["pozo"] = True
-            continue
-        if _fill_labeled_field(paragraph, "LOCACION:", locacion):
-            filled_any["locacion"] = True
-            continue
-        if _fill_mes_anio_cover(paragraph, mes, anio):
-            filled_any["mes_anio"] = True
-            continue
-        if _fill_cd_pozo_wo_line(paragraph, pozo, wo_number):
-            filled_any["cd_pozo_wo"] = True
-            continue
-        if _fill_bare_codigo_or_anio(paragraph, codigo, anio):
-            filled_any["cd_codigo_o_anio"] = True
-            continue
+            counts["reacondicionamiento"] += 1
+        elif _fill_labeled_field(paragraph, "CODIGO:", codigo):
+            counts["codigo"] += 1
+        elif _fill_labeled_field(paragraph, "PAD:", pad):
+            counts["pad"] += 1
+        elif _fill_labeled_field(paragraph, "POZO:", pozo):
+            counts["pozo"] += 1
+        elif _fill_labeled_field(paragraph, "LOCACION:", locacion):
+            counts["locacion"] += 1
+        elif _fill_contrato_label(paragraph, contrato):
+            counts["contrato"] += 1
+        elif _fill_mes_anio_cover(paragraph, mes, anio):
+            counts["mes_anio"] += 1
+        elif _fill_cd_pozo_wo_line(paragraph, pozo, wo_number):
+            counts["pozo"] += 1
+            counts["reacondicionamiento"] += 1
+        elif _fill_bare_codigo_or_anio(paragraph, codigo, anio):
+            counts["codigo"] += 1
+        elif _fill_bare_contrato(paragraph, contrato):
+            counts["contrato"] += 1
 
-    missing = [name for name, done in filled_any.items() if not done]
-    if missing:
-        logger.warning(
-            "La plantilla LDSS no tenia (o no se reconocio) el campo esperado %s. "
-            "Se genero la plantilla igual, pero conviene revisarla manualmente.",
-            missing,
-        )
+    return counts
 
-    # El resaltado amarillo en la plantilla original es solo una guia visual
-    # para saber que datos hay que cambiar por pozo -- no debe aparecer en
-    # el documento final. Se quita de TODOS los runs (no solo los que se
-    # acaban de completar), para que nada quede resaltado por error aunque
-    # no haya sido reconocido por ninguna de las funciones de arriba.
+
+def _clear_all_highlighting(document) -> None:
+    """El resaltado amarillo en la plantilla original es solo una guia
+    visual para saber que datos hay que cambiar por pozo -- no debe
+    aparecer en el documento final. Se quita de TODOS los runs (no solo
+    los que se acaban de completar), para que nada quede resaltado por
+    error aunque no haya sido reconocido por ninguna regla de arriba."""
     for paragraph in _iter_all_paragraphs(document):
         for run in paragraph.runs:
             if run.font.highlight_color is not None:
                 run.font.highlight_color = None
+
+
+def _fill_template(template_resource: str, template_label: str, metadata: ProjectMetadata, output_docx_path: str) -> str:
+    template_path = resource_path(template_resource)
+    if not template_path.exists():
+        raise TemplateFillError(f"No se encontro la plantilla {template_label} en '{template_path}'.")
+
+    try:
+        document = docx.Document(str(template_path))
+    except Exception as exc:  # noqa: BLE001 - un .docx danado no debe tumbar nada
+        raise TemplateFillError(f"No se pudo abrir la plantilla {template_label}: {exc}") from exc
+
+    counts = _fill_common_fields(document, metadata)
+    missing = [name for name, count in counts.items() if count == 0]
+    if missing:
+        logger.warning(
+            "La plantilla %s no tenia (o no se reconocio) el campo esperado %s. "
+            "Se genero la plantilla igual, pero conviene revisarla manualmente.",
+            template_label,
+            missing,
+        )
+
+    _clear_all_highlighting(document)
 
     output_path = Path(output_docx_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,24 +338,49 @@ def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
     return str(output_path)
 
 
+def fill_ldss_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
+    """Genera en ``output_docx_path`` una copia de la plantilla LDSS con los
+    campos variables completados (numero de reacondicionamiento, codigo,
+    PAD, pozo, locacion, mes/ano, contrato), tanto en la portada como en la
+    caratula del CD. El resto del documento (secciones, titulos, logos)
+    queda tal cual esta en la plantilla original -- incluidos sus
+    encabezados Word, que luego se convierten en los marcadores del PDF
+    final."""
+    return _fill_template(LDSS_TEMPLATE_RESOURCE, "LDSS", metadata, output_docx_path)
+
+
+def fill_wo_capex_template(metadata: ProjectMetadata, output_docx_path: str) -> str:
+    """Igual que ``fill_ldss_template``, para la plantilla WO CAPEX (misma
+    convencion de campos resaltados, mismo motor de reemplazo)."""
+    return _fill_template(WO_CAPEX_TEMPLATE_RESOURCE, "WO CAPEX", metadata, output_docx_path)
+
+
+def _generate_template_pdf(fill_fn, project_suffix: str, metadata: ProjectMetadata, project_id: str) -> str:
+    target_dir = generated_templates_dir()
+    base_name = f"{project_id}_{project_suffix}"
+    docx_path = target_dir / f"{base_name}.docx"
+    pdf_path = target_dir / f"{base_name}.pdf"
+
+    fill_fn(metadata, str(docx_path))
+    convert_docx_to_pdf_with_word(str(docx_path), str(pdf_path))
+    return str(pdf_path)
+
+
 def generate_ldss_template_pdf(metadata: ProjectMetadata, project_id: str) -> str:
     """Genera la plantilla PDF completa de un proyecto LDSS: completa la
-    plantilla Word con los datos del proyecto (``fill_ldss_template``) y la
-    convierte a PDF con Microsoft Word (``convert_docx_to_pdf_with_word``,
-    Windows unicamente). El resultado queda en una ubicacion estable (no
-    temporal, ver ``generated_templates_dir``) identificada por
-    ``project_id``, para que ``project.template_path`` siga siendo valido
-    mientras el proyecto exista, no solo durante esta sesion.
+    plantilla Word con los datos del proyecto y la convierte a PDF con
+    Microsoft Word (Windows unicamente). El resultado queda en una
+    ubicacion estable (no temporal, ver ``generated_templates_dir``)
+    identificada por ``project_id``, para que ``project.template_path``
+    siga siendo valido mientras el proyecto exista.
 
     Puede lanzar ``TemplateFillError`` o ``WordConversionError`` (ver
     app.core.word_pdf_converter); ambas pensadas para mostrarse tal cual al
     usuario, porque ya explican la causa real en espanol.
     """
-    target_dir = generated_templates_dir()
-    base_name = f"{project_id}_ldss"
-    docx_path = target_dir / f"{base_name}.docx"
-    pdf_path = target_dir / f"{base_name}.pdf"
+    return _generate_template_pdf(fill_ldss_template, "ldss", metadata, project_id)
 
-    fill_ldss_template(metadata, str(docx_path))
-    convert_docx_to_pdf_with_word(str(docx_path), str(pdf_path))
-    return str(pdf_path)
+
+def generate_wo_capex_template_pdf(metadata: ProjectMetadata, project_id: str) -> str:
+    """Igual que ``generate_ldss_template_pdf``, para la plantilla WO CAPEX."""
+    return _generate_template_pdf(fill_wo_capex_template, "wo_capex", metadata, project_id)

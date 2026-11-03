@@ -69,6 +69,13 @@ class AppSettings:
     # no tener que elegirlo cada vez.
     default_no_aplica_template_path: str = ""
 
+    # Numero de contrato que se usa para pre-completar el campo "Contrato"
+    # al crear un proyecto nuevo (LDSS o WO CAPEX): en la practica es casi
+    # siempre el mismo para todos los proyectos del usuario, asi que no
+    # tiene sentido volver a escribirlo cada vez. Se actualiza solo con lo
+    # que el usuario efectivamente confirme en el formulario de Metadatos.
+    default_contrato: str = "O-02158-PAM-EP-2015"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

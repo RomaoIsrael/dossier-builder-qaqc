@@ -723,8 +723,11 @@ class MainWindow(QMainWindow):
         if not choice_dialog.exec():
             return
 
-        if choice_dialog.selected_type() == ChooseTemplateTypeDialog.LDSS:
+        selected = choice_dialog.selected_type()
+        if selected == ChooseTemplateTypeDialog.LDSS:
             self._new_project_with_ldss_template(name.strip())
+        elif selected == ChooseTemplateTypeDialog.WO_CAPEX:
+            self._new_project_with_wo_capex_template(name.strip())
         else:
             self._new_project_with_uploaded_template(name.strip())
 
@@ -760,30 +763,50 @@ class MainWindow(QMainWindow):
         self._refresh_ui()
 
     def _new_project_with_ldss_template(self, name: str) -> None:
+        self._new_project_with_generated_template(name, "LDSS", template_filler.generate_ldss_template_pdf)
+
+    def _new_project_with_wo_capex_template(self, name: str) -> None:
+        self._new_project_with_generated_template(
+            name, "WO CAPEX", template_filler.generate_wo_capex_template_pdf
+        )
+
+    def _new_project_with_generated_template(self, name: str, template_label: str, generate_pdf_fn) -> None:
         """La plantilla (caratula + indice + caratula de CD) se genera sola:
         se piden los datos del proyecto, se completan en la plantilla Word
-        de LDSS (ver app.core.template_filler) y se convierte a PDF con
-        Microsoft Word. Si algo falla, se avisa con un mensaje claro y no
-        se crea el proyecto (el usuario puede reintentar o elegir "Subir mi
-        propio PDF" en su lugar)."""
-        metadata_dialog = MetadataDialog(ProjectMetadata(proyecto=name), self)
-        metadata_dialog.setWindowTitle("Datos del proyecto (para completar la plantilla LDSS)")
+        correspondiente (ver app.core.template_filler) y se convierte a PDF
+        con Microsoft Word. Si algo falla, se avisa con un mensaje claro y
+        no se crea el proyecto (el usuario puede reintentar o elegir
+        "Subir mi propio PDF" en su lugar). Compartido entre LDSS y WO
+        CAPEX, que solo difieren en la plantilla y el texto de los avisos.
+        """
+        metadata_dialog = MetadataDialog(
+            ProjectMetadata(proyecto=name, contrato=self.settings_service.settings.default_contrato), self
+        )
+        metadata_dialog.setWindowTitle(f"Datos del proyecto (para completar la plantilla {template_label})")
         if not metadata_dialog.exec():
             return
         metadata = metadata_dialog.result_metadata()
         metadata.proyecto = metadata.proyecto or name
 
+        # El contrato ingresado se recuerda como valor por defecto para la
+        # proxima vez (pedido explicito: no volver a escribirlo cada vez).
+        if metadata.contrato.strip():
+            self.settings_service.settings.default_contrato = metadata.contrato.strip()
+            self.settings_service.save()
+
         project = self.project_service.new_project(name)
         project.metadata = metadata
 
-        self.statusBar().showMessage("Generando plantilla LDSS (completando el Word y convirtiendo a PDF)...")
+        self.statusBar().showMessage(
+            f"Generando plantilla {template_label} (completando el Word y convirtiendo a PDF)..."
+        )
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            template_pdf_path = template_filler.generate_ldss_template_pdf(metadata, project.id)
+            template_pdf_path = generate_pdf_fn(metadata, project.id)
         except (template_filler.TemplateFillError, WordConversionError) as exc:
             QMessageBox.critical(
                 self,
-                "No se pudo generar la plantilla LDSS",
+                f"No se pudo generar la plantilla {template_label}",
                 f"{exc}\n\nPuede volver a intentarlo, o crear el proyecto de nuevo eligiendo "
                 "'Subir mi propio PDF ya armado' en su lugar.",
             )
@@ -805,7 +828,7 @@ class MainWindow(QMainWindow):
         self.current_section_id = None
         self._dirty = False
         self._refresh_ui()
-        self.statusBar().showMessage(f"Plantilla LDSS generada: {template_pdf_path}", 8000)
+        self.statusBar().showMessage(f"Plantilla {template_label} generada: {template_pdf_path}", 8000)
 
     def _load_template_into_project(self, project, template_path: str) -> None:
         toc = pdf_engine.extract_toc(template_path)

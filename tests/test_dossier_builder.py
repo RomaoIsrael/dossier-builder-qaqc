@@ -327,7 +327,7 @@ def test_generate_wraps_low_level_pdf_errors_with_document_name(populated_projec
     sec_1_1 = _find(project.sections, "1.1")
     first_doc_name = sec_1_1.documents[0].name
 
-    def _boom(dest_doc, insert_path, at_index):
+    def _boom(dest_doc, insert_path, at_index, **kwargs):
         raise RuntimeError("source object number out of range")
 
     monkeypatch.setattr(pdf_engine, "insert_pdf_pages", _boom)

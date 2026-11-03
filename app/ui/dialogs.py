@@ -133,9 +133,9 @@ termina, sin que haya que hacer nada.</p>
 <h2>1. Flujo de trabajo general</h2>
 <ol>
 <li><b>Nuevo proyecto</b>: se crea el proyecto, se pide el nombre y luego se
-elige el tipo de plantilla: <b>LDSS</b> (se genera sola, pidiendo los datos
-del pozo) o <b>subir un PDF propio</b> ya armado. Ver seccion 2 para el
-detalle de cada opcion.</li>
+elige el tipo de plantilla: <b>LDSS</b> o <b>WO CAPEX</b> (ambas se generan
+solas, pidiendo los datos del pozo) o <b>subir un PDF propio</b> ya armado.
+Ver seccion 2 para el detalle de cada opcion.</li>
 <li>Se revisan/editan las <b>secciones</b> detectadas en la plantilla (o se
 agregan subsecciones propias).</li>
 <li>Se <b>agregan los documentos</b> (PDF) a cada seccion, ya sea manualmente
@@ -158,17 +158,21 @@ misma computadora o en otra.</p>
 <li><b>Nuevo proyecto</b>: crea un proyecto vacio. Pide el nombre y despues
 pregunta el <b>tipo de plantilla</b>:
 <ul>
-<li><b>LDSS</b>: la plantilla (caratula, indice y caratula del CD) se genera
-automaticamente a partir de un Word ya preparado con la aplicacion. Se
+<li><b>LDSS</b> / <b>WO CAPEX</b>: la plantilla (caratula, indice y
+caratula del CD) se genera automaticamente a partir de un Word ya
+preparado con la aplicacion (una plantilla distinta para cada una). Se
 piden los datos del proyecto (Pozo, N.&ordm; de Reacondicionamiento/WO,
-Codigo, PAD, Locaci&oacute;n, Mes y A&ntilde;o, entre otros) en el mismo
-formulario de <b>Metadatos</b> (ver secci&oacute;n 7); con esos datos se
-completa el Word y se convierte a PDF con <b>Microsoft Word</b> (tiene que
-estar instalado en esta computadora: la conversi&oacute;n usa el propio
-Word, para que el resultado se vea exactamente igual que el Word
-original, logos y formato incluidos). Si algo falla (por ejemplo, Word no
-est&aacute; instalado), se avisa con el motivo exacto y no se crea el
-proyecto; se puede reintentar o elegir la otra opci&oacute;n.</li>
+Codigo, PAD, Locaci&oacute;n, Mes, A&ntilde;o y Contrato, entre otros) en
+el mismo formulario de <b>Metadatos</b> (ver secci&oacute;n 7) -- el
+Contrato viene precompletado con el ultimo que se uso, para no tener que
+volver a escribirlo cada vez; con esos datos se completa el Word y se
+convierte a PDF con <b>Microsoft Word</b> (tiene que estar instalado en
+esta computadora: la conversi&oacute;n usa el propio Word, para que el
+resultado se vea exactamente igual que el Word original, logos y formato
+incluidos, y para que sus encabezados se conviertan en los marcadores del
+PDF). Si algo falla (por ejemplo, Word no est&aacute; instalado), se avisa
+con el motivo exacto y no se crea el proyecto; se puede reintentar o
+elegir otra opci&oacute;n.</li>
 <li><b>Subir mi propio PDF ya armado</b>: el flujo de siempre -- se muestra
 el aviso &quot;Elegir plantilla&quot; y se abre el explorador de archivos
 para seleccionar un PDF que ya tenga su caratula, indice y paginas
@@ -410,20 +414,23 @@ WO (N.&ordm; de Reacondicionamiento), Codigo, Contrato, Bloque, PAD,
 Locaci&oacute;n, Fecha, A&ntilde;o, Revision, Tipo</i>, y las propiedades
 que se graban dentro del PDF final: <i>Titulo, Autor, Asunto y Palabras
 clave (PDF)</i>. El campo <i>Mes</i> se elige de una lista (en vez de
-escribirlo) para que coincida siempre con lo que busca el generador de la
-plantilla LDSS. Todos los campos de encabezado tambien se pueden usar como
-variables (<code>{codigo}</code>, <code>{pozo}</code>, <code>{wo}</code>,
-<code>{tipo}</code>, <code>{revision}</code>, <code>{contrato}</code>,
-<code>{bloque}</code>, <code>{pad}</code>, <code>{locacion}</code>,
-<code>{mes}</code>, <code>{anio}</code>) dentro del patron de nombre del
-archivo de salida, configurable en &quot;Configuracion&quot; o
-&quot;Preferencias&quot;.</p>
-<p>Al crear un proyecto nuevo con plantilla <b>LDSS</b> (ver secci&oacute;n
-2), este mismo formulario aparece primero, antes de crear el proyecto, para
-completar la plantilla con esos datos; despu&eacute;s se puede volver a
-abrir desde el bot&oacute;n <b>Metadatos</b> para corregir algo, igual que
-con cualquier otro proyecto (corregirlo ahi NO vuelve a regenerar la
-plantilla ya creada).</p>
+escribirlo) para que coincida siempre con lo que busca el generador de las
+plantillas LDSS/WO CAPEX. Todos los campos de encabezado tambien se pueden
+usar como variables (<code>{codigo}</code>, <code>{pozo}</code>,
+<code>{wo}</code>, <code>{tipo}</code>, <code>{revision}</code>,
+<code>{contrato}</code>, <code>{bloque}</code>, <code>{pad}</code>,
+<code>{locacion}</code>, <code>{mes}</code>, <code>{anio}</code>) dentro
+del patron de nombre del archivo de salida, configurable en
+&quot;Configuracion&quot; o &quot;Preferencias&quot;.</p>
+<p>Al crear un proyecto nuevo con plantilla <b>LDSS</b> o <b>WO CAPEX</b>
+(ver secci&oacute;n 2), este mismo formulario aparece primero, antes de
+crear el proyecto, para completar la plantilla con esos datos; el campo
+<b>Contrato</b> viene precompletado con el ultimo valor usado (se
+actualiza solo cada vez que se confirma el formulario, para no tener que
+volver a escribirlo en cada proyecto nuevo). Despu&eacute;s se puede
+volver a abrir este formulario desde el bot&oacute;n <b>Metadatos</b> para
+corregir algo, igual que con cualquier otro proyecto (corregirlo ahi NO
+vuelve a regenerar la plantilla ya creada).</p>
 
 <h2>8. Configuracion del proyecto</h2>
 <ul>
@@ -617,6 +624,7 @@ class ChooseTemplateTypeDialog(QDialog):
     antes de que existiera esta opcion)."""
 
     LDSS = "ldss"
+    WO_CAPEX = "wo_capex"
     CUSTOM = "custom"
 
     def __init__(self, parent=None):
@@ -644,15 +652,26 @@ class ChooseTemplateTypeDialog(QDialog):
             "continuacion se piden esos datos) y la convierte a PDF."
         )
         ldss_detail.setWordWrap(True)
+
+        self._wo_capex_radio = QRadioButton("WO CAPEX (se genera automaticamente)")
+        wo_capex_detail = QLabel(
+            "    Igual que LDSS, pero con la plantilla de Workover CAPEX."
+        )
+        wo_capex_detail.setWordWrap(True)
+
         self._custom_radio = QRadioButton("Subir mi propio PDF ya armado")
         custom_detail = QLabel(
             "    El PDF ya debe tener su indice y marcadores listos, como se hacia antes."
         )
         custom_detail.setWordWrap(True)
+
         self._group.addButton(self._ldss_radio)
+        self._group.addButton(self._wo_capex_radio)
         self._group.addButton(self._custom_radio)
         layout.addWidget(self._ldss_radio)
         layout.addWidget(ldss_detail)
+        layout.addWidget(self._wo_capex_radio)
+        layout.addWidget(wo_capex_detail)
         layout.addWidget(self._custom_radio)
         layout.addWidget(custom_detail)
 
@@ -662,7 +681,11 @@ class ChooseTemplateTypeDialog(QDialog):
         layout.addWidget(buttons)
 
     def selected_type(self) -> str:
-        return self.LDSS if self._ldss_radio.isChecked() else self.CUSTOM
+        if self._ldss_radio.isChecked():
+            return self.LDSS
+        if self._wo_capex_radio.isChecked():
+            return self.WO_CAPEX
+        return self.CUSTOM
 
 
 SPANISH_MONTHS = [

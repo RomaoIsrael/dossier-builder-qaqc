@@ -773,9 +773,41 @@ página exacta tras las inserciones.
     a PDF (con LibreOffice, como verificacion estructural -- la app en si
     usa Microsoft Word) confirmo que los marcadores (`/Outlines`) se
     generan solos a partir de los encabezados.
-  - Pendiente (a pedido del usuario, se implementa cuando se suban las
-    plantillas correspondientes): las opciones "DOSSIER PERFORACION" y
-    "DOSSIER WO CAPEX" en el mismo selector.
+- **Fix: la plantilla LDSS generada no traia indice y quedaba con el
+  resaltado amarillo en el documento final**. Dos causas reales,
+  reportadas al probarlo:
+  1. `Word.ExportAsFixedFormat()` exporta el PDF SIN NINGUN marcador por
+     defecto (`CreateBookmarks=wdExportCreateNoBookmarks=0`) si no se
+     indica lo contrario, aunque el Word tenga encabezados "Heading
+     1"/"Heading 2". `app/core/word_pdf_converter.py` ahora pasa
+     `CreateBookmarks=wdExportCreateHeadingBookmarks(1)` explicitamente,
+     que es todo el motivo de usar la conversion de Word en primer lugar.
+  2. El resaltado amarillo de la plantilla original era solo una guia
+     visual (que datos cambiar por pozo), pero quedaba intacto en el
+     documento final. Ahora, despues de completar los campos, se recorre
+     TODO el documento (cuerpo y cuadros de texto) y se quita el resaltado
+     de cualquier run que todavia lo tenga.
+- **Plantilla WO CAPEX, con el mismo mecanismo que LDSS, mas auto-llenado
+  del Contrato**: segunda plantilla generada automaticamente
+  (`assets/templates/wo_capex.docx`), reusando el mismo motor de
+  reemplazo de `app/core/template_filler.py` (refactorizado para
+  compartirse entre ambas plantillas, ya que usan la misma convencion de
+  resaltado). Dos diferencias reales entre plantillas que el motor
+  compartido ya contempla: el codigo del documento va "desnudo" (sin
+  etiqueta "CODIGO:") tambien en la portada de WO CAPEX, y el numero de
+  reacondicionamiento en su caratula del CD usa la etiqueta "CAPEX #" en
+  vez de "REACONDICIONAMIENTO #" (`_REACONDICIONAMIENTO_PREFIXES` acepta
+  ambas). Ademas, a pedido del usuario, el **Contrato** ahora tambien se
+  completa (antes quedaba fijo en ambas plantillas, sin estar resaltado;
+  se identifica por etiqueta "CONTRATO N.º:" en la portada y por su valor
+  conocido en la linea suelta de la caratula del CD) y se recuerda como
+  valor por defecto en `AppSettings.default_contrato`
+  (`"O-02158-PAM-EP-2015"` de entrada), para precompletar el formulario de
+  Metadatos al crear un proyecto nuevo y no tener que volver a escribirlo
+  cada vez. Validado de punta a punta con valores de prueba distintos a
+  los de la plantilla original, confirmando que cada campo realmente se
+  sustituye (no solo que coincide por casualidad) -- suite completa de
+  tests corrida con `pytest` real (95 pruebas, todas en verde).
 
 ## Roadmap / Fase 4
 
