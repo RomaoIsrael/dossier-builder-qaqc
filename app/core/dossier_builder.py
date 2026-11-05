@@ -88,6 +88,18 @@ def _is_guia_de_remision_section(title: str) -> bool:
     return "guia" in normalized and "remision" in normalized
 
 
+def _is_graficas_de_torque_section(title: str) -> bool:
+    """Las secciones de "Graficas de Torque" (presentes, con nombres algo
+    distintos, en las tres plantillas: "GRAFICAS DE TORQUE COMPUTARIZADO"
+    en LDSS, "GRAFICAS DE TORQUE DE TUBERIA" en WO CAPEX y PCI) ademas de
+    quedar en el dossier final como cualquier otra seccion, respaldan
+    TODOS sus documentos en su propia carpeta de salida
+    (04_GRAFICAS_DE_TORQUE/), para poder encontrarlas facil sin tener que
+    buscar dentro del PDF completo -- pedido explicito del usuario."""
+    normalized = _normalize_text(title)
+    return "grafica" in normalized and "torque" in normalized
+
+
 def _valid_excluded_pages(doc: DocumentItem) -> set[int]:
     """``doc.excluded_pages`` filtrado a indices realmente dentro de rango
     (defensivo: si el archivo cambio despues de marcar exclusiones, un
@@ -408,11 +420,12 @@ class DossierBuilder:
                 except OSError:
                     logger.warning("No se pudo borrar el archivo temporal '%s'", temp_path)
 
-        # -- 5b. Renombrar originales firmados con su pagina de inicio -------
+        # -- 5b. Renombrar respaldos (originales firmados y/o graficas de
+        # torque) con su pagina de inicio -----------------------------------
         # Recien aqui se conoce con certeza la pagina final de cada
         # documento (el ensamblado, incluido el indice automatico si
         # aplica, ya termino), asi que el renombrado se hace al final.
-        self._rename_signed_originals_with_page_numbers(all_docs, document_page_position)
+        self._rename_backups_with_page_numbers(all_docs, document_page_position)
 
         # -- 5c. Control de versiones: registrar esta generacion ------------
         # Se cuenta como generacion exitosa recien aqui, porque todo lo
@@ -630,6 +643,7 @@ class DossierBuilder:
             "processed": root / "01_DOCUMENTOS_PROCESADOS",
             "final": root / "02_DOSSIER_FINAL",
             "reports": root / "03_REPORTES",
+            "torque": root / "04_GRAFICAS_DE_TORQUE",
         }
         for path in dirs.values():
             path.mkdir(parents=True, exist_ok=True)
@@ -645,6 +659,17 @@ class DossierBuilder:
             doc.status = DocumentStatus.ERROR
             doc.error_message = str(exc)
             raise DossierGenerationError(str(exc)) from exc
+
+        # Las secciones de "Graficas de Torque" respaldan TODOS sus
+        # documentos en su propia carpeta de salida (04_GRAFICAS_DE_TORQUE/),
+        # tengan firma o no: se decide antes de ver si el documento se va a
+        # aplanar, porque aplica sin importar ese resultado (a diferencia
+        # de 00_ORIGINALES_FIRMADOS/, que solo es para documentos firmados).
+        if _is_graficas_de_torque_section(section.title):
+            torque_backup_path = dirs["torque"] / f"{safe_filename(doc.name)}"
+            if not torque_backup_path.exists():
+                shutil.copy2(source, torque_backup_path)
+            doc.torque_backup_path = str(torque_backup_path)
 
         if not doc.will_be_flattened:
             doc.status = DocumentStatus.OK
@@ -707,17 +732,17 @@ class DossierBuilder:
         doc.sha256_flattened = sha256_file(flat_path)
         doc.status = DocumentStatus.FLATTENED
 
-    def _rename_signed_originals_with_page_numbers(
+    def _rename_backups_with_page_numbers(
         self,
         all_docs: list[tuple[SectionNode, DocumentItem]],
         document_page_position: dict[str, int],
     ) -> None:
-        """Renombra la copia de respaldo (00_ORIGINALES_FIRMADOS/) de cada
-        documento con firma, anteponiendo la pagina donde termino en el
-        dossier final: ``pag {N}_{nombre_original}.pdf``. Solo puede
-        hacerse aqui, una vez terminado el ensamblado (incluido el indice
-        automatico si aplica), que es cuando se conoce la pagina real de
-        cada documento.
+        """Renombra las copias de respaldo de cada documento (en
+        00_ORIGINALES_FIRMADOS/ y/o 04_GRAFICAS_DE_TORQUE/, segun
+        corresponda), anteponiendo la pagina donde termino en el dossier
+        final: ``pag {N}_{nombre_original}.pdf``. Solo puede hacerse aqui,
+        una vez terminado el ensamblado (incluido el indice automatico si
+        aplica), que es cuando se conoce la pagina real de cada documento.
 
         La version aplanada de 01_DOCUMENTOS_PROCESADOS/ NO se renombra:
         debe conservar exactamente el mismo nombre que el archivo original,
@@ -732,6 +757,8 @@ class DossierBuilder:
 
             if doc.backup_path:
                 doc.backup_path = self._rename_with_page_prefix(doc.backup_path, page_number)
+            if doc.torque_backup_path:
+                doc.torque_backup_path = self._rename_with_page_prefix(doc.torque_backup_path, page_number)
 
     def _rename_with_page_prefix(self, path_str: str, page_number: int) -> str:
         path = Path(path_str)
@@ -824,6 +851,7 @@ class DossierBuilder:
                     "flattened": doc.will_be_flattened,
                     "flattened_path": doc.flattened_path,
                     "backup_path": doc.backup_path,
+                    "torque_backup_path": doc.torque_backup_path,
                     "sha256_flattened": doc.sha256_flattened,
                     "flatten_dpi": doc.flatten_dpi,
                     "has_signature": doc.has_signature,

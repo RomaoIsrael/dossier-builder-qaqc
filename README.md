@@ -270,14 +270,18 @@ desinstalador se crean siempre.
                                  el numero de generacion/revision y el
                                  listado "pag. N  NOMBRE_ARCHIVO.pdf" de
                                  todos los documentos originales
+    04_GRAFICAS_DE_TORQUE/      Copias de TODOS los documentos de una
+                                 seccion de "Graficas de Torque" (tengan
+                                 firma o no), con el mismo prefijo
+                                 "pag {N}_" que 00_ORIGINALES_FIRMADOS/
 ```
 
 El prefijo `pag {N}_` solo puede calcularse **despues** de armar el dossier
 completo (recien ahi se sabe en que pagina termino cada documento), asi que
-el renombrado ocurre como ultimo paso de la generacion, no al aplanar. Solo
-se aplica a la copia de respaldo de `00_ORIGINALES_FIRMADOS/`: la version
-aplanada de `01_DOCUMENTOS_PROCESADOS/` siempre conserva el nombre original
-tal cual.
+el renombrado ocurre como ultimo paso de la generacion, no al aplanar. Se
+aplica a la copia de respaldo de `00_ORIGINALES_FIRMADOS/` y a la de
+`04_GRAFICAS_DE_TORQUE/`: la version aplanada de `01_DOCUMENTOS_PROCESADOS/`
+siempre conserva el nombre original tal cual.
 
 ## Proyecto de ejemplo
 
@@ -837,6 +841,19 @@ página exacta tras las inserciones.
   de opciones es ahora una tabla de datos (clave, titulo, detalle) en vez
   de un bloque de codigo por cada radio, para que agregar una plantilla
   nueva en el futuro sea una linea, no repetir la estructura entera.
+- **Carpeta de salida `04_GRAFICAS_DE_TORQUE/`**: a pedido del usuario
+  ("falta una carpeta que diga Graficas de Torque"), cualquier seccion de
+  "Graficas de Torque" (presente, con nombre algo distinto, en las tres
+  plantillas: "GRAFICAS DE TORQUE COMPUTARIZADO" en LDSS, "GRAFICAS DE
+  TORQUE DE TUBERIA" en WO CAPEX y PCI) ahora respalda TODOS sus
+  documentos en esta carpeta nueva, tengan firma o no -- a diferencia de
+  `00_ORIGINALES_FIRMADOS/`, que solo es para documentos firmados. Mismo
+  mecanismo que esa carpeta: copia intacta del original, renombrada al
+  final con el prefijo `pag {N}_` segun donde termino en el dossier final
+  (`DossierBuilder._is_graficas_de_torque_section`,
+  `DocumentItem.torque_backup_path`;
+  `_rename_signed_originals_with_page_numbers` se renombro a
+  `_rename_backups_with_page_numbers`, ahora cubre ambas carpetas).
 
 ## Roadmap / Fase 4
 

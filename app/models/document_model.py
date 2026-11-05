@@ -70,6 +70,12 @@ class DocumentItem:
     # inicio real del documento en el dossier final (ver DossierBuilder).
     backup_path: Optional[str] = None
 
+    # Copia del original en 04_GRAFICAS_DE_TORQUE/, solo para documentos de
+    # una seccion de "Graficas de Torque" (ver DossierBuilder.
+    # _is_graficas_de_torque_section). Igual que backup_path, se renombra
+    # con el prefijo "pag N_" una vez conocida la pagina de inicio real.
+    torque_backup_path: Optional[str] = None
+
     @property
     def name(self) -> str:
         return self.display_name or (Path(self.source_path).name if self.source_path else "(sin nombre)")

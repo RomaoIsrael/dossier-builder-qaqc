@@ -12,6 +12,7 @@ from app.core.dossier_builder import (
     DossierBuilder,
     DossierGenerationError,
     _estimate_index_page_count,
+    _is_graficas_de_torque_section,
     _is_guia_de_remision_section,
     _render_index_document,
 )
@@ -450,6 +451,49 @@ def test_guias_de_remision_section_never_backs_up_even_if_signed(populated_proje
     assert result.flattened_count == 1  # se aplano con normalidad...
     assert target_doc.flattened_path is not None
     assert target_doc.backup_path is None  # ...pero nunca se respaldo.
+
+
+def test_is_graficas_de_torque_section_matches_regardless_of_accents_and_case():
+    assert _is_graficas_de_torque_section("GRAFICAS DE TORQUE COMPUTARIZADO")
+    assert _is_graficas_de_torque_section("Gráficas de Torque de Tubería")
+    assert _is_graficas_de_torque_section("8.- GRAFICAS DE TORQUE DE TUBERIA")
+    assert not _is_graficas_de_torque_section("2.2 TUBERIA")
+    assert not _is_graficas_de_torque_section("ANEXOS")
+
+
+def test_graficas_de_torque_section_backs_up_all_documents_even_without_signature(populated_project, tmp_path):
+    """Pedido explicito: la seccion de "Graficas de Torque" respalda TODOS
+    sus documentos en 04_GRAFICAS_DE_TORQUE/, tengan firma o no -- a
+    diferencia de 00_ORIGINALES_FIRMADOS/, que solo es para documentos
+    firmados."""
+    project, dyn = populated_project
+    sec_1_2 = _find(project.sections, "1.2")
+    sec_1_2.title = "GRAFICAS DE TORQUE DE TUBERIA"
+    target_doc = sec_1_2.documents[0]
+    assert target_doc.signature_treatment == SignatureTreatment.AUTO
+    assert not target_doc.will_be_flattened
+
+    builder = DossierBuilder(project)
+    builder.generate(str(tmp_path))
+
+    assert target_doc.torque_backup_path is not None
+    assert Path(target_doc.torque_backup_path).exists()
+    assert target_doc.name in Path(target_doc.torque_backup_path).name
+    assert Path(target_doc.torque_backup_path).name.startswith("pag ")
+    assert Path(target_doc.torque_backup_path).parent.name == "04_GRAFICAS_DE_TORQUE"
+    # No tiene firma: no debe haberse respaldado tambien como firmado.
+    assert target_doc.backup_path is None
+
+
+def test_sections_without_graficas_de_torque_do_not_use_torque_backup(populated_project, tmp_path):
+    project, dyn = populated_project
+    sec_1_2 = _find(project.sections, "1.2")
+    target_doc = sec_1_2.documents[0]
+
+    builder = DossierBuilder(project)
+    builder.generate(str(tmp_path))
+
+    assert target_doc.torque_backup_path is None
 
 
 def test_flattened_document_backup_renamed_again_after_second_run(populated_project, tmp_path):
